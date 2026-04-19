@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="fuel_primary">#1B5E20</color>
+    <color name="fuel_primary_dark">#123F17</color>
+    <color name="fuel_primary_light">#E4F1E5</color>
+    <color name="fuel_secondary">#0E7490</color>
+    <color name="fuel_secondary_dark">#155E75</color>
+    <color name="app_background">#F4F7F5</color>
+    <color name="surface_card">#FFFFFFFF</color>
+    <color name="text_primary">#172019</color>
+    <color name="text_secondary">#526058</color>
+    <color name="chart_axis">#6B7280</color>
+    <color name="chart_grid">#D8DEE4</color>
+    <color name="chart_line">#1B5E20</color>
+    <color name="chart_point">#0E7490</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>
