@@ -2,11 +2,13 @@
 <resources>
     <color name="fuel_primary">#1B5E20</color>
     <color name="fuel_primary_dark">#123F17</color>
-    <color name="fuel_primary_light">#E4F1E5</color>
+    <color name="fuel_primary_light">#D9F2D6</color>
     <color name="fuel_secondary">#0E7490</color>
     <color name="fuel_secondary_dark">#155E75</color>
-    <color name="app_background">#F4F7F5</color>
+    <color name="fuel_secondary_light">#C7EEF7</color>
+    <color name="app_background">#F8FAF7</color>
     <color name="surface_card">#FFFFFFFF</color>
+    <color name="surface_card_high">#EEF6EF</color>
     <color name="text_primary">#172019</color>
     <color name="text_secondary">#526058</color>
     <color name="chart_axis">#6B7280</color>

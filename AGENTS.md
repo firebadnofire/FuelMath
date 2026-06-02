@@ -1,219 +1,283 @@
-# Fuel Math – MVP Scope
+# Vehicle Maintenance Checkbook – Full Scope (MVP → v1)
 
 ## 1. Goal
 
-Build a simple, fast app to track fuel usage per vehicle and calculate real-world cost and efficiency metrics.
+Build a per-vehicle preventative maintenance system that helps users keep vehicles healthy long-term by:
 
-The app must be faster and more convenient than using a spreadsheet.
-
----
-
-## 2. Core Features
-
-### 2.1 Vehicle Management
-
-Users can create and manage multiple vehicles.
-
-Each vehicle includes:
-- Name (e.g., "2009 Smart Fortwo")
-- Fuel tank capacity (gallons or liters)
-- Unit system:
-  - Distance: miles or kilometers
-  - Volume: gallons or liters
-
-Minimum requirements:
-- Create vehicle
-- Select vehicle
-- Delete vehicle
+* Tracking completed maintenance
+* Predicting upcoming maintenance
+* Surfacing what should be done next
+* Measuring cost and efficiency over time
 
 ---
 
-### 2.2 Fuel Log Entries
+## 2. Core Principles
 
-Each vehicle has its own fuel log.
-
-Each entry includes:
-- Date
-- Time
-- Odometer reading
-- Fuel amount (gallons/liters)
-- Price per unit (per gallon/liter)
-- Full tank flag (yes/no)
-
-Derived per entry:
-- Total cost = fuel amount × price per unit
-
-Minimum requirements:
-- Add entry
-- View entry list (per vehicle)
-- Delete entry
+* Prioritize actionable insights over raw data
+* Keep UI simple and consistent across all maintenance items
+* Support both mileage-based and time-based intervals
+* Ensure all data structures are reusable and scalable
 
 ---
 
-### 2.3 Core Calculations
-
-Calculations must update automatically when entries are added or removed.
-
-#### MPG / Efficiency
-
-Only calculated between **full tank → full tank** entries.
-
-- Distance = difference in odometer readings
-- Fuel used = sum of fuel between full tanks
-- MPG (or L/100km equivalent)
-
-If no valid full-to-full data exists:
-- Do not display MPG
-
----
-
-#### Cost Tracking
-
-Per vehicle:
-- Total fuel cost (lifetime)
-- Cost per mile (or km):
-  - total fuel cost / total distance
-
----
-
-#### Distance Tracking
-
-- Distance per entry:
-  - current odometer - previous odometer
-
-- Total distance:
-  - last odometer - first odometer
-
----
-
-### 2.4 Vehicle Summary Card (Main Screen)
-
-Each vehicle displays:
-
-- Name
-- Last recorded MPG (if available)
-- Total fuel cost
-- Cost per mile/km
-- Last fill-up date
-
----
-
-## 3. UI Requirements
-
-### 3.1 Main Screen
-
-- List of vehicles (cards)
-- Each card shows summary stats
-- Tap → opens vehicle detail screen
-- Button: "Add Vehicle"
-
----
-
-### 3.2 Vehicle Detail Screen
-
-- Fuel log list (newest first)
-- Button: "Add Entry"
-
-Each log item shows:
-- Date/time
-- Fuel amount
-- Total cost
-- Odometer
-- Indicator if full tank
-
----
-
-### 3.3 Add Entry Screen
-
-Form inputs:
-- Date (default: today)
-- Time (default: now)
-- Odometer
-- Fuel amount
-- Price per unit
-- Full tank toggle
-
-Submit:
-- Saves entry
-- Recalculates all metrics
-- Returns to vehicle detail screen
-
----
-
-## 4. Data Model (Simplified)
+## 3. Data Model
 
 ### Vehicle
-- id
-- name
-- tank_capacity
-- distance_unit (mi/km)
-- volume_unit (gal/L)
 
-### FuelEntry
-- id
-- vehicle_id
-- date_time
-- odometer
-- fuel_amount
-- price_per_unit
-- is_full_tank
+* id
+* name (user-defined)
+* make
+* model
+* year
+* current_mileage
+* fuel_type (gasoline/diesel/etc)
+* tank_capacity
 
-Derived (not stored or optional cache):
-- total_cost
+### MaintenanceCategory
 
----
+* id
+* name (Engine, Fluids, Wear Items, Electrical, Critical)
 
-## 5. Non-Functional Requirements
+### MaintenanceItem
 
-- Fast entry: adding a log should take <10 seconds
-- Offline-first (no account required)
-- Data stored locally (persistent)
-- Calculations must be deterministic and repeatable
-- App must handle:
-  - missing full tank data
-  - irregular fill-ups
+* id
+* vehicle_id
+* category_id
+* name (e.g. Oil Change, Spark Plugs)
+* interval_miles (nullable)
+* interval_time_days (nullable)
+* last_service_mileage
+* last_service_date
+* last_service_cost
+* notes
 
----
+### FuelLog
 
-## 6. Explicitly Out of Scope (MVP)
+* id
+* vehicle_id
+* date
+* mileage
+* fuel_amount
+* price_per_unit
 
-Do NOT implement:
+### OilLog
 
-- GPS tracking
-- Gas station lookup
-- Social features
-- Maintenance tracking (oil, tires, etc.)
-- Cloud sync / accounts
-- Notifications
-- Graphs / analytics dashboards
-
----
-
-## 7. Success Criteria
-
-MVP is complete when:
-
-- User can:
-  - create a vehicle
-  - log multiple fuel entries
-  - see accurate MPG (with full tank logic)
-  - see total cost and cost per mile/km
-
-- App is:
-  - stable
-  - fast to use
-  - requires minimal input friction
+* id
+* vehicle_id
+* date
+* mileage
+* oil_type
+* cost
 
 ---
 
-## 8. additional requirements
+## 4. Maintenance Categories & Items
 
-- Graphs (MPG, cost over time)
-- Fuel price trends
-- Remaining range estimation
-- Export (CSV)
-- Backup / restore
-- Multi-device sync
-- Maintenance tracking
+### Engine
+
+* Oil Change
+* Spark Plugs
+* Engine Air Filter
+* Fuel System Service
+
+### Fluids
+
+* Coolant
+* Brake Fluid
+* Transmission Fluid
+* Differential Fluid
+
+### Wear Items
+
+* Tires
+* Brake Pads
+* Brake Rotors
+* Wiper Blades
+
+### Electrical
+
+* Battery
+
+### Critical (Long Interval)
+
+* Timing Belt
+* Water Pump
 
 ---
+
+## 5. Core Features
+
+### 5.1 Maintenance Tracking
+
+* Log service event with:
+
+  * mileage
+  * date
+  * cost
+  * notes
+* Auto-update last_service fields
+
+### 5.2 Interval Tracking
+
+* Calculate next due mileage
+* Calculate next due date
+* Support:
+
+  * mileage-only
+  * time-only
+  * hybrid
+
+### 5.3 Status System
+
+Each item has status:
+
+* Good
+* Due Soon
+* Overdue
+
+Configurable threshold (e.g. 10% remaining = Due Soon)
+
+### 5.4 Dashboard
+
+Per vehicle:
+
+* Overdue items (highest priority)
+* Due soon items
+* Upcoming maintenance
+* Quick add buttons
+
+### 5.5 Fuel Tracking
+
+* Log refuels
+* Calculate MPG
+* Track fuel cost over time
+
+### 5.6 Cost Tracking
+
+* Total maintenance cost per vehicle
+* Cost per mile
+* Fuel vs maintenance breakdown
+
+---
+
+## 6. Advanced Features (v1)
+
+### 6.1 Maintenance Health Score
+
+* Percentage-based score per vehicle
+* Weighted by importance of items
+* Example weights:
+
+  * Oil: high
+  * Brakes: high
+  * Cabin filter: low
+
+### 6.2 Alerts & Notifications
+
+* Overdue alerts
+* Due soon alerts
+* Configurable reminders
+
+### 6.3 Trends & Insights
+
+* MPG trends over time
+* Seasonal MPG comparison
+* Cost trends
+
+### 6.4 Smart Recommendations
+
+* Highlight most urgent task
+* Suggest maintenance based on usage patterns
+
+---
+
+## 7. UI Structure
+
+### Home Screen
+
+* List of vehicles
+* Health score per vehicle
+* Quick summary (MPG, cost)
+
+### Vehicle Detail Screen
+
+* Current mileage
+* Maintenance health score
+* Sections:
+
+  * Overdue
+  * Due soon
+  * All maintenance
+
+### Maintenance Item Screen
+
+* Last service details
+* Interval settings
+* Next due info
+* History log
+
+### Add Log Screen
+
+* Select type (fuel, maintenance)
+* Input fields
+
+---
+
+## 8. Calculations
+
+### MPG
+
+MPG = miles driven / fuel used
+
+### Cost per Mile
+
+(cost of fuel + maintenance) / miles driven
+
+### Next Due (Mileage)
+
+last_service_mileage + interval_miles
+
+### Next Due (Time)
+
+last_service_date + interval_time_days
+
+---
+
+## 9. Constraints
+
+* Must work offline-first
+* Data stored locally (sync optional later)
+* All operations must be idempotent
+
+---
+
+## 10. Future Expansion (Not MVP)
+
+* OBD integration
+* Cloud sync / multi-device
+* Export (CSV/JSON)
+* VIN decoding for auto-fill
+* Maintenance presets per vehicle model
+* AI-based predictions
+
+---
+
+## 11. MVP Checklist
+
+* [ ] Create vehicle
+* [ ] Add maintenance items
+* [ ] Log maintenance
+* [ ] Log fuel
+* [ ] View dashboard with statuses
+* [ ] Calculate MPG
+* [ ] Calculate next due
+
+---
+
+## 12. Definition of Done
+
+* User can manage multiple vehicles
+* User can see what maintenance is due or overdue
+* User can track fuel and cost
+* User can maintain a vehicle proactively without external tools
+

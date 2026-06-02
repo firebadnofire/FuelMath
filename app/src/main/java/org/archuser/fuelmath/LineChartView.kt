@@ -9,6 +9,7 @@ import android.util.AttributeSet
 import android.util.TypedValue
 import android.view.View
 import androidx.core.content.ContextCompat
+import com.google.android.material.color.MaterialColors
 import kotlin.math.abs
 
 class LineChartView @JvmOverloads constructor(
@@ -16,33 +17,33 @@ class LineChartView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
 ) : View(context, attrs) {
     private val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = ContextCompat.getColor(context, R.color.text_primary)
+        color = themedColor(com.google.android.material.R.attr.colorOnSurface, R.color.text_primary)
         textSize = 16f.sp()
         typeface = android.graphics.Typeface.DEFAULT_BOLD
     }
     private val axisPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = ContextCompat.getColor(context, R.color.chart_axis)
+        color = themedColor(com.google.android.material.R.attr.colorOutline, R.color.chart_axis)
         strokeWidth = 1f.dp()
     }
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = ContextCompat.getColor(context, R.color.chart_grid)
+        color = themedColor(com.google.android.material.R.attr.colorOutlineVariant, R.color.chart_grid)
         strokeWidth = 1f.dp()
     }
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = ContextCompat.getColor(context, R.color.chart_line)
+        color = themedColor(androidx.appcompat.R.attr.colorPrimary, R.color.chart_line)
         strokeWidth = 3f.dp()
         style = Paint.Style.STROKE
     }
     private val pointPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = ContextCompat.getColor(context, R.color.chart_point)
+        color = themedColor(com.google.android.material.R.attr.colorSecondary, R.color.chart_point)
         style = Paint.Style.FILL
     }
     private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = ContextCompat.getColor(context, R.color.text_secondary)
+        color = themedColor(com.google.android.material.R.attr.colorOnSurfaceVariant, R.color.text_secondary)
         textSize = 12f.sp()
     }
     private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = ContextCompat.getColor(context, R.color.text_secondary)
+        color = themedColor(com.google.android.material.R.attr.colorOnSurfaceVariant, R.color.text_secondary)
         textSize = 14f.sp()
     }
     private val textBounds = Rect()
@@ -143,4 +144,7 @@ class LineChartView @JvmOverloads constructor(
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, this, resources.displayMetrics)
 
     private fun Int.dpInt(): Int = (this * resources.displayMetrics.density).toInt()
+
+    private fun themedColor(attr: Int, fallbackResId: Int): Int =
+        MaterialColors.getColor(context, attr, ContextCompat.getColor(context, fallbackResId))
 }

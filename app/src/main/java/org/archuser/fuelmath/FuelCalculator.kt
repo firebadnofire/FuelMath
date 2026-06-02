@@ -1,7 +1,12 @@
 package org.archuser.fuelmath
 
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.Month
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 object FuelCalculator {
     private val dateLabelFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("M/d")
@@ -9,36 +14,199 @@ object FuelCalculator {
     fun entriesForVehicle(entries: List<FuelEntry>, vehicleId: String): List<FuelEntry> =
         entries.filter { it.vehicleId == vehicleId }
 
-    fun maintenanceForVehicle(entries: List<MaintenanceEntry>, vehicleId: String): List<MaintenanceEntry> =
-        entries.filter { it.vehicleId == vehicleId }
+    fun maintenanceItemsForVehicle(items: List<MaintenanceItem>, vehicleId: String): List<MaintenanceItem> =
+        items.filter { it.vehicleId == vehicleId }
+
+    fun serviceLogsForVehicle(logs: List<MaintenanceServiceLog>, vehicleId: String): List<MaintenanceServiceLog> =
+        logs.filter { it.vehicleId == vehicleId }
 
     fun buildVehicleSummary(
         vehicle: Vehicle,
-        fuelEntries: List<FuelEntry>,
-        maintenanceEntries: List<MaintenanceEntry>,
+        data: FuelMathData,
+        asOfDate: LocalDate = LocalDate.now(),
     ): VehicleSummary {
-        val vehicleFuelEntries = entriesForVehicle(fuelEntries, vehicle.id)
-        val vehicleMaintenanceEntries = maintenanceForVehicle(maintenanceEntries, vehicle.id)
-        val totalFuelCost = vehicleFuelEntries.sumOfSafe { it.totalCost }
+        val vehicleFuelEntries = entriesForVehicle(data.fuelEntries, vehicle.id)
+        val vehicleServiceLogs = serviceLogsForVehicle(data.maintenanceServiceLogs, vehicle.id)
+        val vehicleMaintenanceItems = maintenanceItemsForVehicle(data.maintenanceItems, vehicle.id)
+        val totalFuelCost = vehicleFuelEntries.sumFuelCostSafe { it.totalCost }
+        val totalMaintenanceCost = vehicleServiceLogs.sumMaintenanceCostSafe { it.cost }
+        val totalCost = totalFuelCost + totalMaintenanceCost
         val totalDistance = calculateTotalDistance(vehicleFuelEntries)
-        val costPerDistance = totalDistance?.takeIf { it > 0.0 }?.let { totalFuelCost / it }
+        val costPerDistance = totalDistance?.takeIf { it > 0.0 }?.let { totalCost / it }
         val lastEfficiency = calculateEfficiencySegments(vehicle, vehicleFuelEntries).lastOrNull()?.value
         val lastFillUpDate = vehicleFuelEntries.maxByOrNull { it.dateTime }?.dateTime
         val estimatedRange = estimateRemainingRange(vehicle, lastEfficiency)
         val lastOdometer = vehicleFuelEntries.maxByOrNull { it.odometer }?.odometer
+        val currentMileage = currentMileageForVehicle(vehicle, vehicleFuelEntries, vehicleServiceLogs)
+        val states = calculateMaintenanceStates(vehicle, data, asOfDate)
 
         return VehicleSummary(
             vehicle = vehicle,
             totalFuelCost = totalFuelCost,
+            totalMaintenanceCost = totalMaintenanceCost,
+            totalCost = totalCost,
             totalDistance = totalDistance,
             costPerDistance = costPerDistance,
             lastEfficiency = lastEfficiency,
             lastFillUpDate = lastFillUpDate,
             estimatedRange = estimatedRange,
             lastOdometer = lastOdometer,
+            currentMileage = currentMileage,
+            healthScore = calculateHealthScore(states),
+            overdueCount = states.count { it.status == MaintenanceStatus.OVERDUE },
+            dueSoonCount = states.count { it.status == MaintenanceStatus.DUE_SOON },
+            smartRecommendation = chooseSmartRecommendation(states),
             fuelEntryCount = vehicleFuelEntries.size,
-            maintenanceEntryCount = vehicleMaintenanceEntries.size,
+            maintenanceItemCount = vehicleMaintenanceItems.size,
+            maintenanceServiceLogCount = vehicleServiceLogs.size,
         )
+    }
+
+    fun calculateMaintenanceStates(
+        vehicle: Vehicle,
+        data: FuelMathData,
+        asOfDate: LocalDate = LocalDate.now(),
+    ): List<MaintenanceItemState> =
+        calculateMaintenanceStates(
+            vehicle = vehicle,
+            categories = data.maintenanceCategories,
+            items = data.maintenanceItems,
+            serviceLogs = data.maintenanceServiceLogs,
+            fuelEntries = data.fuelEntries,
+            thresholdPercent = data.settings.dueSoonThresholdPercent,
+            asOfDate = asOfDate,
+        )
+
+    fun calculateMaintenanceStates(
+        vehicle: Vehicle,
+        categories: List<MaintenanceCategory>,
+        items: List<MaintenanceItem>,
+        serviceLogs: List<MaintenanceServiceLog>,
+        fuelEntries: List<FuelEntry>,
+        thresholdPercent: Int,
+        asOfDate: LocalDate = LocalDate.now(),
+    ): List<MaintenanceItemState> {
+        val categoriesById = (MaintenanceDefaults.categories + categories).associateBy { it.id }
+        val vehicleItems = maintenanceItemsForVehicle(items, vehicle.id)
+        val vehicleServiceLogs = serviceLogsForVehicle(serviceLogs, vehicle.id)
+        val logsByItem = vehicleServiceLogs.groupBy { it.maintenanceItemId }
+        val currentMileage = currentMileageForVehicle(vehicle, entriesForVehicle(fuelEntries, vehicle.id), vehicleServiceLogs)
+        val dueSoonRatio = thresholdPercent.coerceIn(0, 100) / 100.0
+
+        return vehicleItems.map { item ->
+            val itemLogs = logsByItem[item.id].orEmpty()
+            val lastLog = itemLogs.maxWithOrNull(compareBy<MaintenanceServiceLog> { it.dateTime }.thenBy { it.odometer })
+            val lastMileage = listOfNotNull(item.lastServiceMileage, lastLog?.odometer)
+                .maxOrNull()
+                ?.takeIf { it.isFinite() && it >= 0.0 }
+            val lastDate = listOfNotNull(item.lastServiceDate, lastLog?.dateTime?.toLocalDate())
+                .maxOrNull()
+            val nextMileage = item.intervalMiles
+                ?.takeIf { it.isFinite() && it > 0.0 }
+                ?.let { interval -> lastMileage?.plus(interval) }
+            val nextDate = item.intervalTimeDays
+                ?.takeIf { it > 0 }
+                ?.let { days -> lastDate?.plusDays(days.toLong()) }
+            val milesRemaining = nextMileage?.let { it - currentMileage }
+            val daysRemaining = nextDate?.let { ChronoUnit.DAYS.between(asOfDate, it) }
+            val hasMileageInterval = item.intervalMiles?.let { it.isFinite() && it > 0.0 } == true
+            val hasTimeInterval = item.intervalTimeDays?.let { it > 0 } == true
+            val needsBaseline = (hasMileageInterval && lastMileage == null) || (hasTimeInterval && lastDate == null)
+
+            val mileageRatio = item.intervalMiles
+                ?.takeIf { it.isFinite() && it > 0.0 }
+                ?.let { interval -> milesRemaining?.div(interval) }
+            val timeRatio = item.intervalTimeDays
+                ?.takeIf { it > 0 }
+                ?.let { interval -> daysRemaining?.toDouble()?.div(interval.toDouble()) }
+            val lowestRatio = listOfNotNull(mileageRatio, timeRatio).minOrNull()
+
+            val status = when {
+                needsBaseline -> MaintenanceStatus.OVERDUE
+                milesRemaining?.let { it <= 0.0 } == true -> MaintenanceStatus.OVERDUE
+                daysRemaining?.let { it <= 0L } == true -> MaintenanceStatus.OVERDUE
+                lowestRatio?.let { it <= dueSoonRatio } == true -> MaintenanceStatus.DUE_SOON
+                else -> MaintenanceStatus.GOOD
+            }
+
+            MaintenanceItemState(
+                item = item,
+                category = categoriesById[item.categoryId] ?: MaintenanceDefaults.categories.first(),
+                status = status,
+                lastServiceLog = lastLog,
+                nextDueMileage = nextMileage,
+                nextDueDate = nextDate,
+                milesRemaining = milesRemaining,
+                daysRemaining = daysRemaining,
+                urgencySortValue = when {
+                    needsBaseline -> -1.0
+                    lowestRatio != null -> lowestRatio
+                    else -> Double.MAX_VALUE
+                },
+            )
+        }.sortedWith(
+            compareBy<MaintenanceItemState> { statusSortRank(it.status) }
+                .thenBy { it.urgencySortValue }
+                .thenBy { it.item.name.lowercase() },
+        )
+    }
+
+    fun calculateHealthScore(states: List<MaintenanceItemState>): Int {
+        if (states.isEmpty()) return 100
+        val totalWeight = states.sumOf { it.item.importance.scoreWeight }
+        if (totalWeight <= 0.0) return 100
+        val score = states.sumOf { state ->
+            val statusScore = when (state.status) {
+                MaintenanceStatus.GOOD -> 1.0
+                MaintenanceStatus.DUE_SOON -> 0.6
+                MaintenanceStatus.OVERDUE -> 0.0
+            }
+            state.item.importance.scoreWeight * statusScore
+        }
+        return ((score / totalWeight) * 100.0).roundToInt().coerceIn(0, 100)
+    }
+
+    fun chooseSmartRecommendation(states: List<MaintenanceItemState>): MaintenanceItemState? =
+        states.minWithOrNull(
+            compareBy<MaintenanceItemState> { statusSortRank(it.status) }
+                .thenBy { it.urgencySortValue }
+                .thenBy { it.item.name.lowercase() },
+        )
+
+    fun buildReminderSnapshot(
+        data: FuelMathData,
+        asOfDate: LocalDate = LocalDate.now(),
+    ): MaintenanceReminderSnapshot? {
+        val allStates = data.vehicles.flatMap { calculateMaintenanceStates(it, data, asOfDate) }
+        val overdue = allStates.count { it.status == MaintenanceStatus.OVERDUE }
+        val dueSoon = allStates.count { it.status == MaintenanceStatus.DUE_SOON }
+        if (overdue == 0 && dueSoon == 0) return null
+
+        val first = allStates.firstOrNull {
+            it.status == MaintenanceStatus.OVERDUE || it.status == MaintenanceStatus.DUE_SOON
+        }
+        val title = when {
+            overdue > 0 -> "$overdue maintenance item${plural(overdue)} overdue"
+            else -> "$dueSoon maintenance item${plural(dueSoon)} due soon"
+        }
+        val message = first?.let { "${it.item.name}: ${it.status.displayLabel}" }
+            ?: "Open Fuel Math to review maintenance."
+        return MaintenanceReminderSnapshot(
+            title = title,
+            message = message,
+            overdueCount = overdue,
+            dueSoonCount = dueSoon,
+        )
+    }
+
+    fun currentMileageForVehicle(
+        vehicle: Vehicle,
+        fuelEntries: List<FuelEntry>,
+        serviceLogs: List<MaintenanceServiceLog>,
+    ): Double {
+        val latestFuel = fuelEntries.maxOfOrNull { it.odometer.takeIf(Double::isFinite) ?: 0.0 } ?: 0.0
+        val latestService = serviceLogs.maxOfOrNull { it.odometer.takeIf(Double::isFinite) ?: 0.0 } ?: 0.0
+        return max(vehicle.currentMileage.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0, max(latestFuel, latestService))
     }
 
     fun calculateEfficiencySegments(
@@ -128,12 +296,74 @@ object FuelCalculator {
             }
     }
 
+    fun buildMaintenanceCostOverTime(serviceLogs: List<MaintenanceServiceLog>): List<ChartPoint> {
+        var runningTotal = 0.0
+        return serviceLogs
+            .filter { it.cost.isFinite() && it.cost >= 0.0 }
+            .sortedWith(compareBy<MaintenanceServiceLog> { it.dateTime }.thenBy { it.odometer })
+            .map {
+                runningTotal += it.cost
+                ChartPoint(
+                    label = it.dateTime.format(dateLabelFormatter),
+                    dateTime = it.dateTime,
+                    value = runningTotal,
+                )
+            }
+    }
+
+    fun buildTotalCostOverTime(
+        fuelEntries: List<FuelEntry>,
+        serviceLogs: List<MaintenanceServiceLog>,
+    ): List<ChartPoint> {
+        data class CostEvent(val dateTime: LocalDateTime, val odometer: Double, val cost: Double)
+
+        var runningTotal = 0.0
+        return (
+            fuelEntries
+                .filter { it.hasValidFuelInputs() }
+                .map { CostEvent(it.dateTime, it.odometer, it.totalCost) } +
+                serviceLogs
+                    .filter { it.cost.isFinite() && it.cost >= 0.0 }
+                    .map { CostEvent(it.dateTime, it.odometer, it.cost) }
+            )
+            .sortedWith(compareBy<CostEvent> { it.dateTime }.thenBy { it.odometer })
+            .map {
+                runningTotal += it.cost
+                ChartPoint(
+                    label = it.dateTime.format(dateLabelFormatter),
+                    dateTime = it.dateTime,
+                    value = runningTotal,
+                )
+            }
+    }
+
+    fun buildSeasonalEfficiencyComparison(
+        vehicle: Vehicle,
+        fuelEntries: List<FuelEntry>,
+        asOfDate: LocalDate = LocalDate.now(),
+    ): SeasonalEfficiencyComparison {
+        val segments = calculateEfficiencySegments(vehicle, fuelEntries)
+        val currentSeason = seasonLabel(asOfDate.month)
+        val seasonValues = segments.filter { seasonLabel(it.dateTime.month) == currentSeason }.map { it.value }
+        val allValues = segments.map { it.value }
+        return SeasonalEfficiencyComparison(
+            currentSeason = currentSeason,
+            currentSeasonAverage = seasonValues.averageOrNull(),
+            overallAverage = allValues.averageOrNull(),
+        )
+    }
+
     fun buildExportCsv(data: FuelMathData): String {
         val rows = mutableListOf<List<String>>()
         rows += listOf(
             "record_type",
             "vehicle_id",
             "vehicle_name",
+            "make",
+            "model",
+            "year",
+            "current_mileage",
+            "fuel_type",
             "distance_unit",
             "volume_unit",
             "tank_capacity",
@@ -144,7 +374,12 @@ object FuelCalculator {
             "price_per_unit",
             "total_cost",
             "is_full_tank",
-            "maintenance_type",
+            "category_id",
+            "category_name",
+            "maintenance_item_id",
+            "maintenance_item_name",
+            "interval_miles",
+            "interval_time_days",
             "maintenance_cost",
             "notes",
         )
@@ -154,9 +389,19 @@ object FuelCalculator {
                 "vehicle",
                 vehicle.id,
                 vehicle.name,
+                vehicle.make,
+                vehicle.model,
+                vehicle.year?.toString().orEmpty(),
+                vehicle.currentMileage.toStorageString(),
+                vehicle.fuelType.storageValue,
                 vehicle.distanceUnit.storageValue,
                 vehicle.volumeUnit.storageValue,
                 vehicle.tankCapacity.toStorageString(),
+                "",
+                "",
+                "",
+                "",
+                "",
                 "",
                 "",
                 "",
@@ -178,6 +423,11 @@ object FuelCalculator {
                     "fuel_entry",
                     entry.vehicleId,
                     vehicle?.name.orEmpty(),
+                    vehicle?.make.orEmpty(),
+                    vehicle?.model.orEmpty(),
+                    vehicle?.year?.toString().orEmpty(),
+                    vehicle?.currentMileage?.toStorageString().orEmpty(),
+                    vehicle?.fuelType?.storageValue.orEmpty(),
                     vehicle?.distanceUnit?.storageValue.orEmpty(),
                     vehicle?.volumeUnit?.storageValue.orEmpty(),
                     vehicle?.tankCapacity?.toStorageString().orEmpty(),
@@ -191,30 +441,82 @@ object FuelCalculator {
                     "",
                     "",
                     "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
                 )
             }
 
-        data.maintenanceEntries
-            .sortedWith(compareBy<MaintenanceEntry> { it.vehicleId }.thenBy { it.dateTime }.thenBy { it.odometer })
-            .forEach { entry ->
-                val vehicle = data.vehicles.firstOrNull { it.id == entry.vehicleId }
+        data.maintenanceItems
+            .sortedWith(compareBy<MaintenanceItem> { it.vehicleId }.thenBy { it.name.lowercase() })
+            .forEach { item ->
+                val vehicle = data.vehicles.firstOrNull { it.id == item.vehicleId }
+                val category = data.maintenanceCategories.firstOrNull { it.id == item.categoryId }
                 rows += listOf(
-                    "maintenance_entry",
-                    entry.vehicleId,
+                    "maintenance_item",
+                    item.vehicleId,
                     vehicle?.name.orEmpty(),
+                    vehicle?.make.orEmpty(),
+                    vehicle?.model.orEmpty(),
+                    vehicle?.year?.toString().orEmpty(),
+                    vehicle?.currentMileage?.toStorageString().orEmpty(),
+                    vehicle?.fuelType?.storageValue.orEmpty(),
                     vehicle?.distanceUnit?.storageValue.orEmpty(),
                     vehicle?.volumeUnit?.storageValue.orEmpty(),
                     vehicle?.tankCapacity?.toStorageString().orEmpty(),
-                    entry.id,
-                    entry.dateTime.toString(),
-                    entry.odometer.toStorageString(),
                     "",
                     "",
                     "",
                     "",
-                    entry.type,
-                    entry.cost.toStorageString(),
-                    entry.notes,
+                    "",
+                    "",
+                    "",
+                    item.categoryId,
+                    category?.name.orEmpty(),
+                    item.id,
+                    item.name,
+                    item.intervalMiles?.toStorageString().orEmpty(),
+                    item.intervalTimeDays?.toString().orEmpty(),
+                    item.lastServiceCost?.toStorageString().orEmpty(),
+                    item.notes,
+                )
+            }
+
+        data.maintenanceServiceLogs
+            .sortedWith(compareBy<MaintenanceServiceLog> { it.vehicleId }.thenBy { it.dateTime }.thenBy { it.odometer })
+            .forEach { log ->
+                val vehicle = data.vehicles.firstOrNull { it.id == log.vehicleId }
+                val item = data.maintenanceItems.firstOrNull { it.id == log.maintenanceItemId }
+                val category = data.maintenanceCategories.firstOrNull { it.id == item?.categoryId }
+                rows += listOf(
+                    "maintenance_service_log",
+                    log.vehicleId,
+                    vehicle?.name.orEmpty(),
+                    vehicle?.make.orEmpty(),
+                    vehicle?.model.orEmpty(),
+                    vehicle?.year?.toString().orEmpty(),
+                    vehicle?.currentMileage?.toStorageString().orEmpty(),
+                    vehicle?.fuelType?.storageValue.orEmpty(),
+                    vehicle?.distanceUnit?.storageValue.orEmpty(),
+                    vehicle?.volumeUnit?.storageValue.orEmpty(),
+                    vehicle?.tankCapacity?.toStorageString().orEmpty(),
+                    log.id,
+                    log.dateTime.toString(),
+                    log.odometer.toStorageString(),
+                    "",
+                    "",
+                    "",
+                    "",
+                    item?.categoryId.orEmpty(),
+                    category?.name.orEmpty(),
+                    log.maintenanceItemId,
+                    item?.name.orEmpty(),
+                    item?.intervalMiles?.toStorageString().orEmpty(),
+                    item?.intervalTimeDays?.toString().orEmpty(),
+                    log.cost.toStorageString(),
+                    log.notes,
                 )
             }
 
@@ -233,6 +535,13 @@ object FuelCalculator {
     fun distanceUnitLabel(vehicle: Vehicle): String = vehicle.distanceUnit.displayLabel
 
     fun volumeUnitLabel(vehicle: Vehicle): String = vehicle.volumeUnit.displayLabel
+
+    private fun statusSortRank(status: MaintenanceStatus): Int =
+        when (status) {
+            MaintenanceStatus.OVERDUE -> 0
+            MaintenanceStatus.DUE_SOON -> 1
+            MaintenanceStatus.GOOD -> 2
+        }
 
     private fun calculateTotalDistance(entries: List<FuelEntry>): Double? {
         val sorted = sortedByOdometer(entries)
@@ -271,11 +580,30 @@ object FuelCalculator {
             pricePerUnit.isFinite() &&
             pricePerUnit >= 0.0
 
-    private fun Iterable<FuelEntry>.sumOfSafe(selector: (FuelEntry) -> Double): Double =
+    private fun Iterable<FuelEntry>.sumFuelCostSafe(selector: (FuelEntry) -> Double): Double =
         fold(0.0) { total, entry ->
             val value = selector(entry)
             if (value.isFinite() && value >= 0.0) total + value else total
         }
+
+    private fun Iterable<MaintenanceServiceLog>.sumMaintenanceCostSafe(selector: (MaintenanceServiceLog) -> Double): Double =
+        fold(0.0) { total, entry ->
+            val value = selector(entry)
+            if (value.isFinite() && value >= 0.0) total + value else total
+        }
+
+    private fun List<Double>.averageOrNull(): Double? =
+        takeIf { it.isNotEmpty() }?.average()
+
+    private fun seasonLabel(month: Month): String =
+        when (month) {
+            Month.DECEMBER, Month.JANUARY, Month.FEBRUARY -> "Winter"
+            Month.MARCH, Month.APRIL, Month.MAY -> "Spring"
+            Month.JUNE, Month.JULY, Month.AUGUST -> "Summer"
+            Month.SEPTEMBER, Month.OCTOBER, Month.NOVEMBER -> "Fall"
+        }
+
+    private fun plural(count: Int): String = if (count == 1) "" else "s"
 
     private fun Double.toStorageString(): String =
         if (this % 1.0 == 0.0) toLong().toString() else toString()
