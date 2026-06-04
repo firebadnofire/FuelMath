@@ -283,6 +283,15 @@ object MaintenanceDefaults {
         MaintenanceCategory(CATEGORY_CRITICAL, "Critical"),
     )
 
+    private fun splitTireTemplates(
+        intervalMiles: Double,
+        intervalTimeDays: Int,
+        importance: MaintenanceImportance,
+    ): List<MaintenanceTemplateDefinition> = listOf(
+        MaintenanceTemplateDefinition("Front Tires", CATEGORY_WEAR_ITEMS, intervalMiles = intervalMiles, intervalTimeDays = intervalTimeDays, importance = importance),
+        MaintenanceTemplateDefinition("Rear Tires", CATEGORY_WEAR_ITEMS, intervalMiles = intervalMiles, intervalTimeDays = intervalTimeDays, importance = importance),
+    )
+
     private val liquidFuelTemplates: List<MaintenanceTemplateDefinition> = listOf(
         MaintenanceTemplateDefinition("Oil Change", CATEGORY_ENGINE, intervalMiles = 5_000.0, intervalTimeDays = 180, importance = MaintenanceImportance.HIGH),
         MaintenanceTemplateDefinition("Engine Air Filter", CATEGORY_ENGINE, intervalMiles = 15_000.0, intervalTimeDays = 365),
@@ -290,10 +299,13 @@ object MaintenanceDefaults {
         MaintenanceTemplateDefinition("Transmission Fluid", CATEGORY_FLUIDS, intervalMiles = 60_000.0, intervalTimeDays = 1_095, importance = MaintenanceImportance.HIGH),
         MaintenanceTemplateDefinition("Coolant", CATEGORY_FLUIDS, intervalMiles = 50_000.0, intervalTimeDays = 730, importance = MaintenanceImportance.MEDIUM),
         MaintenanceTemplateDefinition("Brake Fluid", CATEGORY_FLUIDS, intervalTimeDays = 730, importance = MaintenanceImportance.HIGH),
-        MaintenanceTemplateDefinition("Tires", CATEGORY_WEAR_ITEMS, intervalMiles = 6_000.0, intervalTimeDays = 180, importance = MaintenanceImportance.HIGH),
         MaintenanceTemplateDefinition("Brake Pads", CATEGORY_WEAR_ITEMS, intervalMiles = 25_000.0, importance = MaintenanceImportance.HIGH),
         MaintenanceTemplateDefinition("Wiper Blades", CATEGORY_WEAR_ITEMS, intervalTimeDays = 365, importance = MaintenanceImportance.LOW),
         MaintenanceTemplateDefinition("12V Battery", CATEGORY_ELECTRICAL, intervalTimeDays = 1_460, importance = MaintenanceImportance.MEDIUM),
+    ) + splitTireTemplates(
+        intervalMiles = 6_000.0,
+        intervalTimeDays = 180,
+        importance = MaintenanceImportance.HIGH,
     )
 
     private val evTemplates: List<MaintenanceTemplateDefinition> = listOf(
@@ -303,10 +315,13 @@ object MaintenanceDefaults {
         MaintenanceTemplateDefinition("Cabin Air Filter", CATEGORY_ENGINE, intervalMiles = 15_000.0, intervalTimeDays = 365, importance = MaintenanceImportance.MEDIUM),
         MaintenanceTemplateDefinition("Brake Fluid", CATEGORY_FLUIDS, intervalTimeDays = 730, importance = MaintenanceImportance.HIGH),
         MaintenanceTemplateDefinition("Coolant", CATEGORY_FLUIDS, intervalMiles = 100_000.0, intervalTimeDays = 1_825, importance = MaintenanceImportance.MEDIUM),
-        MaintenanceTemplateDefinition("Tires", CATEGORY_WEAR_ITEMS, intervalMiles = 6_000.0, intervalTimeDays = 180, importance = MaintenanceImportance.HIGH),
         MaintenanceTemplateDefinition("Brake Pads", CATEGORY_WEAR_ITEMS, intervalMiles = 35_000.0, importance = MaintenanceImportance.MEDIUM),
         MaintenanceTemplateDefinition("Wiper Blades", CATEGORY_WEAR_ITEMS, intervalTimeDays = 365, importance = MaintenanceImportance.LOW),
         MaintenanceTemplateDefinition("12V Battery", CATEGORY_ELECTRICAL, intervalTimeDays = 1_460, importance = MaintenanceImportance.MEDIUM),
+    ) + splitTireTemplates(
+        intervalMiles = 6_000.0,
+        intervalTimeDays = 180,
+        importance = MaintenanceImportance.HIGH,
     )
 
     fun categoryIdForLegacyType(type: String): String {
@@ -350,16 +365,22 @@ object MaintenanceDefaults {
                 MaintenanceTemplateDefinition("Oil Change", CATEGORY_ENGINE, intervalMiles = 4_000.0, intervalTimeDays = 180, importance = MaintenanceImportance.HIGH),
                 MaintenanceTemplateDefinition("Chain Service", CATEGORY_CRITICAL, intervalMiles = 600.0, intervalTimeDays = 90, importance = MaintenanceImportance.HIGH),
                 MaintenanceTemplateDefinition("Brake Fluid", CATEGORY_FLUIDS, intervalTimeDays = 730, importance = MaintenanceImportance.HIGH),
-                MaintenanceTemplateDefinition("Tires", CATEGORY_WEAR_ITEMS, intervalMiles = 4_000.0, intervalTimeDays = 180, importance = MaintenanceImportance.HIGH),
                 MaintenanceTemplateDefinition("Brake Pads", CATEGORY_WEAR_ITEMS, intervalMiles = 12_000.0, importance = MaintenanceImportance.HIGH),
                 MaintenanceTemplateDefinition("Coolant", CATEGORY_FLUIDS, intervalMiles = 24_000.0, intervalTimeDays = 730, importance = MaintenanceImportance.MEDIUM),
                 MaintenanceTemplateDefinition("12V Battery", CATEGORY_ELECTRICAL, intervalTimeDays = 1_460, importance = MaintenanceImportance.MEDIUM),
+            ) + splitTireTemplates(
+                intervalMiles = 4_000.0,
+                intervalTimeDays = 180,
+                importance = MaintenanceImportance.HIGH,
             )
             VehicleType.OTHER -> listOf(
                 MaintenanceTemplateDefinition("Brake Fluid", CATEGORY_FLUIDS, intervalTimeDays = 730, importance = MaintenanceImportance.HIGH),
-                MaintenanceTemplateDefinition("Tires", CATEGORY_WEAR_ITEMS, intervalMiles = 6_000.0, intervalTimeDays = 180, importance = MaintenanceImportance.HIGH),
                 MaintenanceTemplateDefinition("Wiper Blades", CATEGORY_WEAR_ITEMS, intervalTimeDays = 365, importance = MaintenanceImportance.LOW),
                 MaintenanceTemplateDefinition("12V Battery", CATEGORY_ELECTRICAL, intervalTimeDays = 1_460, importance = MaintenanceImportance.MEDIUM),
+            ) + splitTireTemplates(
+                intervalMiles = 6_000.0,
+                intervalTimeDays = 180,
+                importance = MaintenanceImportance.HIGH,
             )
         }
 }

@@ -87,6 +87,9 @@ class FuelCalculatorTest {
         assertTrue(templates.none { it.name == "Oil Change" })
         assertTrue(templates.any { it.name == "Charge Port Inspection" })
         assertTrue(templates.any { it.name == "Charging Cable Inspection" })
+        assertTrue(templates.any { it.name == "Front Tires" })
+        assertTrue(templates.any { it.name == "Rear Tires" })
+        assertTrue(templates.none { it.name == "Tires" })
     }
 
     @Test
@@ -96,6 +99,9 @@ class FuelCalculatorTest {
         assertTrue(templates.any { it.name == "Oil Change" })
         assertTrue(templates.any { it.name == "Charge Port Inspection" })
         assertTrue(templates.any { it.name == "Hybrid System Inspection" })
+        assertTrue(templates.any { it.name == "Front Tires" })
+        assertTrue(templates.any { it.name == "Rear Tires" })
+        assertTrue(templates.none { it.name == "Tires" })
     }
 
     @Test
