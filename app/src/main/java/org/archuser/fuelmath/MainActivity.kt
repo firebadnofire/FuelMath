@@ -417,6 +417,11 @@ class MainActivity : AppCompatActivity() {
                 "Liters" to VolumeUnit.LITERS,
             ),
         )
+        val newCarSwitch = SwitchMaterial(this).apply {
+            text = "New car setup"
+            isChecked = false
+            setTextColor(color(R.color.text_primary))
+        }
         val tankLayout = labeledView("Tank capacity (${VolumeUnit.GALLONS.displayLabel})", tankInput)
         val batteryLayout = labeledView("Battery capacity (${EnergyUnit.KILOWATT_HOURS.displayLabel})", batteryInput)
         val volumeUnitLayout = labeledView("Fuel volume unit", volumeUnit.view)
@@ -434,6 +439,7 @@ class MainActivity : AppCompatActivity() {
             addView(batteryLayout)
             addView(labeledView("Distance unit", distanceUnit.view))
             addView(volumeUnitLayout)
+            addView(newCarSwitch)
         }
 
         fun selectedVehicleType(): VehicleType = vehicleTypes[vehicleTypeSpinner.selectedItemPosition]
@@ -509,10 +515,20 @@ class MainActivity : AppCompatActivity() {
                 )
                 val seededMaintenanceItems = MaintenanceDefaults.templatesForVehicleType(vehicleType)
                     .map { template -> template.toMaintenanceItem(vehicle.id) }
+                val seededBaselineLogs = if (newCarSwitch.isChecked) {
+                    MaintenanceDefaults.baselineServiceLogsForNewVehicle(
+                        vehicle = vehicle,
+                        items = seededMaintenanceItems,
+                        createdAt = LocalDateTime.now(),
+                    )
+                } else {
+                    emptyList()
+                }
                 if (persistData(
                         data.copy(
                             vehicles = data.vehicles + vehicle,
                             maintenanceItems = data.maintenanceItems + seededMaintenanceItems,
+                            maintenanceServiceLogs = data.maintenanceServiceLogs + seededBaselineLogs,
                         ),
                         "Vehicle saved.",
                     )

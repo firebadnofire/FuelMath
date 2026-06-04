@@ -2,6 +2,7 @@ package org.archuser.fuelmath
 
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.util.UUID
 
 const val CURRENT_SCHEMA_VERSION = 5
 
@@ -382,6 +383,24 @@ object MaintenanceDefaults {
                 intervalMiles = 6_000.0,
                 intervalTimeDays = 180,
                 importance = MaintenanceImportance.HIGH,
+            )
+        }
+
+    fun baselineServiceLogsForNewVehicle(
+        vehicle: Vehicle,
+        items: List<MaintenanceItem>,
+        createdAt: LocalDateTime,
+        notes: String = "Baseline recorded automatically for new vehicle setup.",
+    ): List<MaintenanceServiceLog> =
+        items.map { item ->
+            MaintenanceServiceLog(
+                id = UUID.randomUUID().toString(),
+                vehicleId = vehicle.id,
+                maintenanceItemId = item.id,
+                dateTime = createdAt,
+                odometer = vehicle.currentMileage,
+                cost = 0.0,
+                notes = notes,
             )
         }
 }

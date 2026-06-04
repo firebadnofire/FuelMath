@@ -472,6 +472,68 @@ class FuelCalculatorTest {
         assertTrue(reminder?.message?.contains("Oil Change") == true)
     }
 
+    @Test
+    fun newCarBaselineLogsMatchSeededMaintenanceItems() {
+        val createdAt = LocalDateTime.of(2026, 6, 4, 9, 15)
+        val seededItems = MaintenanceDefaults.templatesForVehicleType(VehicleType.GASOLINE)
+            .mapIndexed { index, template ->
+                MaintenanceItem(
+                    id = "seed-$index",
+                    vehicleId = vehicle.id,
+                    categoryId = template.categoryId,
+                    name = template.name,
+                    intervalMiles = template.intervalMiles,
+                    intervalTimeDays = template.intervalTimeDays,
+                    importance = template.importance,
+                )
+            }
+
+        val logs = MaintenanceDefaults.baselineServiceLogsForNewVehicle(vehicle, seededItems, createdAt)
+
+        assertEquals(seededItems.size, logs.size)
+        assertTrue(logs.all { it.vehicleId == vehicle.id })
+        assertTrue(logs.all { it.dateTime == createdAt })
+        assertTrue(logs.all { it.odometer == vehicle.currentMileage })
+        assertTrue(logs.all { it.cost == 0.0 })
+        assertEquals(
+            seededItems.map { it.id }.sorted(),
+            logs.map { it.maintenanceItemId }.sorted(),
+        )
+    }
+
+    @Test
+    fun newCarBaselineLogsMakeSeededItemsStartAsGood() {
+        val createdAt = LocalDateTime.of(2026, 6, 4, 9, 15)
+        val startingVehicle = vehicle.copy(currentMileage = 500.0)
+        val seededItems = MaintenanceDefaults.templatesForVehicleType(VehicleType.GASOLINE)
+            .mapIndexed { index, template ->
+                MaintenanceItem(
+                    id = "seed-state-$index",
+                    vehicleId = startingVehicle.id,
+                    categoryId = template.categoryId,
+                    name = template.name,
+                    intervalMiles = template.intervalMiles,
+                    intervalTimeDays = template.intervalTimeDays,
+                    importance = template.importance,
+                )
+            }
+        val logs = MaintenanceDefaults.baselineServiceLogsForNewVehicle(startingVehicle, seededItems, createdAt)
+        val seededData = FuelMathData(
+            vehicles = listOf(startingVehicle),
+            maintenanceItems = seededItems,
+            maintenanceServiceLogs = logs,
+        )
+
+        val states = FuelCalculator.calculateMaintenanceStates(
+            startingVehicle,
+            seededData,
+            createdAt.toLocalDate(),
+        )
+
+        assertTrue(states.isNotEmpty())
+        assertTrue(states.all { it.status == MaintenanceStatus.GOOD })
+    }
+
     private fun data(
         fuelEntries: List<FuelEntry> = emptyList(),
         items: List<MaintenanceItem> = listOf(maintenanceItem()),
