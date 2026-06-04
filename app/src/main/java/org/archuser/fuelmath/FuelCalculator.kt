@@ -25,24 +25,28 @@ object FuelCalculator {
         data: FuelMathData,
         asOfDate: LocalDate = LocalDate.now(),
     ): VehicleSummary {
-        val vehicleFuelEntries = entriesForVehicle(data.fuelEntries, vehicle.id)
+        val vehicleEnergyEntries = entriesForVehicle(data.fuelEntries, vehicle.id)
+        val vehicleFuelEntries = vehicleEnergyEntries.filter { it.entryType == EnergyEntryType.FUEL }
+        val vehicleChargingEntries = vehicleEnergyEntries.filter { it.entryType == EnergyEntryType.CHARGING }
         val vehicleServiceLogs = serviceLogsForVehicle(data.maintenanceServiceLogs, vehicle.id)
         val vehicleMaintenanceItems = maintenanceItemsForVehicle(data.maintenanceItems, vehicle.id)
-        val totalFuelCost = vehicleFuelEntries.sumFuelCostSafe { it.totalCost }
+        val totalFuelCost = if (vehicle.vehicleType.usesLiquidFuel) vehicleFuelEntries.sumEnergyCostSafe { it.totalCost } else 0.0
+        val totalChargingCost = if (vehicle.vehicleType.usesBattery) vehicleChargingEntries.sumEnergyCostSafe { it.totalCost } else 0.0
         val totalMaintenanceCost = vehicleServiceLogs.sumMaintenanceCostSafe { it.cost }
-        val totalCost = totalFuelCost + totalMaintenanceCost
-        val totalDistance = calculateTotalDistance(vehicleFuelEntries)
+        val totalCost = totalFuelCost + totalChargingCost + totalMaintenanceCost
+        val totalDistance = calculateTotalDistance(vehicleEnergyEntries)
         val costPerDistance = totalDistance?.takeIf { it > 0.0 }?.let { totalCost / it }
-        val lastEfficiency = calculateEfficiencySegments(vehicle, vehicleFuelEntries).lastOrNull()?.value
-        val lastFillUpDate = vehicleFuelEntries.maxByOrNull { it.dateTime }?.dateTime
+        val lastEfficiency = calculateEfficiencySegments(vehicle, vehicleEnergyEntries).lastOrNull()?.value
+        val lastFillUpDate = vehicleEnergyEntries.maxByOrNull { it.dateTime }?.dateTime
         val estimatedRange = estimateRemainingRange(vehicle, lastEfficiency)
-        val lastOdometer = vehicleFuelEntries.maxByOrNull { it.odometer }?.odometer
-        val currentMileage = currentMileageForVehicle(vehicle, vehicleFuelEntries, vehicleServiceLogs)
+        val lastOdometer = vehicleEnergyEntries.maxByOrNull { it.odometer }?.odometer
+        val currentMileage = currentMileageForVehicle(vehicle, vehicleEnergyEntries, vehicleServiceLogs)
         val states = calculateMaintenanceStates(vehicle, data, asOfDate)
 
         return VehicleSummary(
             vehicle = vehicle,
             totalFuelCost = totalFuelCost,
+            totalChargingCost = totalChargingCost,
             totalMaintenanceCost = totalMaintenanceCost,
             totalCost = totalCost,
             totalDistance = totalDistance,
@@ -55,8 +59,10 @@ object FuelCalculator {
             healthScore = calculateHealthScore(states),
             overdueCount = states.count { it.status == MaintenanceStatus.OVERDUE },
             dueSoonCount = states.count { it.status == MaintenanceStatus.DUE_SOON },
+            unknownCount = states.count { it.status == MaintenanceStatus.UNKNOWN },
             smartRecommendation = chooseSmartRecommendation(states),
             fuelEntryCount = vehicleFuelEntries.size,
+            chargingEntryCount = vehicleChargingEntries.size,
             maintenanceItemCount = vehicleMaintenanceItems.size,
             maintenanceServiceLogCount = vehicleServiceLogs.size,
         )
@@ -96,11 +102,8 @@ object FuelCalculator {
         return vehicleItems.map { item ->
             val itemLogs = logsByItem[item.id].orEmpty()
             val lastLog = itemLogs.maxWithOrNull(compareBy<MaintenanceServiceLog> { it.dateTime }.thenBy { it.odometer })
-            val lastMileage = listOfNotNull(item.lastServiceMileage, lastLog?.odometer)
-                .maxOrNull()
-                ?.takeIf { it.isFinite() && it >= 0.0 }
-            val lastDate = listOfNotNull(item.lastServiceDate, lastLog?.dateTime?.toLocalDate())
-                .maxOrNull()
+            val lastMileage = lastLog?.odometer?.takeIf { it.isFinite() && it >= 0.0 }
+            val lastDate = lastLog?.dateTime?.toLocalDate()
             val nextMileage = item.intervalMiles
                 ?.takeIf { it.isFinite() && it > 0.0 }
                 ?.let { interval -> lastMileage?.plus(interval) }
@@ -122,9 +125,9 @@ object FuelCalculator {
             val lowestRatio = listOfNotNull(mileageRatio, timeRatio).minOrNull()
 
             val status = when {
-                needsBaseline -> MaintenanceStatus.OVERDUE
-                milesRemaining?.let { it <= 0.0 } == true -> MaintenanceStatus.OVERDUE
-                daysRemaining?.let { it <= 0L } == true -> MaintenanceStatus.OVERDUE
+                needsBaseline -> MaintenanceStatus.UNKNOWN
+                milesRemaining?.let { it < 0.0 } == true -> MaintenanceStatus.OVERDUE
+                daysRemaining?.let { it < 0L } == true -> MaintenanceStatus.OVERDUE
                 lowestRatio?.let { it <= dueSoonRatio } == true -> MaintenanceStatus.DUE_SOON
                 else -> MaintenanceStatus.GOOD
             }
@@ -157,6 +160,7 @@ object FuelCalculator {
         if (totalWeight <= 0.0) return 100
         val score = states.sumOf { state ->
             val statusScore = when (state.status) {
+                MaintenanceStatus.UNKNOWN -> 0.3
                 MaintenanceStatus.GOOD -> 1.0
                 MaintenanceStatus.DUE_SOON -> 0.6
                 MaintenanceStatus.OVERDUE -> 0.0
@@ -168,8 +172,8 @@ object FuelCalculator {
 
     fun chooseSmartRecommendation(states: List<MaintenanceItemState>): MaintenanceItemState? =
         states.minWithOrNull(
-            compareBy<MaintenanceItemState> { statusSortRank(it.status) }
-                .thenBy { it.urgencySortValue }
+            compareBy<MaintenanceItemState> { recommendationRank(it) }
+                .thenBy { recommendationProgressValue(it) }
                 .thenBy { it.item.name.lowercase() },
         )
 
@@ -213,7 +217,8 @@ object FuelCalculator {
         vehicle: Vehicle,
         fuelEntries: List<FuelEntry>,
     ): List<EfficiencySegment> {
-        val sorted = sortedByOdometer(fuelEntries)
+        val entryType = preferredEfficiencyEntryType(vehicle)
+        val sorted = sortedByOdometer(fuelEntries.filter { it.entryType == entryType })
         val segments = mutableListOf<EfficiencySegment>()
         var anchor: FuelEntry? = null
         var fuelSinceAnchor = 0.0
@@ -364,9 +369,12 @@ object FuelCalculator {
             "year",
             "current_mileage",
             "fuel_type",
+            "vehicle_type",
             "distance_unit",
             "volume_unit",
+            "energy_unit",
             "tank_capacity",
+            "battery_capacity",
             "entry_id",
             "date_time",
             "odometer",
@@ -394,9 +402,12 @@ object FuelCalculator {
                 vehicle.year?.toString().orEmpty(),
                 vehicle.currentMileage.toStorageString(),
                 vehicle.fuelType.storageValue,
+                vehicle.vehicleType.storageValue,
                 vehicle.distanceUnit.storageValue,
                 vehicle.volumeUnit.storageValue,
+                vehicle.energyUnit.storageValue,
                 vehicle.tankCapacity.toStorageString(),
+                vehicle.batteryCapacity?.toStorageString().orEmpty(),
                 "",
                 "",
                 "",
@@ -428,9 +439,12 @@ object FuelCalculator {
                     vehicle?.year?.toString().orEmpty(),
                     vehicle?.currentMileage?.toStorageString().orEmpty(),
                     vehicle?.fuelType?.storageValue.orEmpty(),
+                    vehicle?.vehicleType?.storageValue.orEmpty(),
                     vehicle?.distanceUnit?.storageValue.orEmpty(),
                     vehicle?.volumeUnit?.storageValue.orEmpty(),
+                    vehicle?.energyUnit?.storageValue.orEmpty(),
                     vehicle?.tankCapacity?.toStorageString().orEmpty(),
+                    vehicle?.batteryCapacity?.toStorageString().orEmpty(),
                     entry.id,
                     entry.dateTime.toString(),
                     entry.odometer.toStorageString(),
@@ -463,9 +477,12 @@ object FuelCalculator {
                     vehicle?.year?.toString().orEmpty(),
                     vehicle?.currentMileage?.toStorageString().orEmpty(),
                     vehicle?.fuelType?.storageValue.orEmpty(),
+                    vehicle?.vehicleType?.storageValue.orEmpty(),
                     vehicle?.distanceUnit?.storageValue.orEmpty(),
                     vehicle?.volumeUnit?.storageValue.orEmpty(),
+                    vehicle?.energyUnit?.storageValue.orEmpty(),
                     vehicle?.tankCapacity?.toStorageString().orEmpty(),
+                    vehicle?.batteryCapacity?.toStorageString().orEmpty(),
                     "",
                     "",
                     "",
@@ -479,7 +496,7 @@ object FuelCalculator {
                     item.name,
                     item.intervalMiles?.toStorageString().orEmpty(),
                     item.intervalTimeDays?.toString().orEmpty(),
-                    item.lastServiceCost?.toStorageString().orEmpty(),
+                    "",
                     item.notes,
                 )
             }
@@ -499,9 +516,12 @@ object FuelCalculator {
                     vehicle?.year?.toString().orEmpty(),
                     vehicle?.currentMileage?.toStorageString().orEmpty(),
                     vehicle?.fuelType?.storageValue.orEmpty(),
+                    vehicle?.vehicleType?.storageValue.orEmpty(),
                     vehicle?.distanceUnit?.storageValue.orEmpty(),
                     vehicle?.volumeUnit?.storageValue.orEmpty(),
+                    vehicle?.energyUnit?.storageValue.orEmpty(),
                     vehicle?.tankCapacity?.toStorageString().orEmpty(),
+                    vehicle?.batteryCapacity?.toStorageString().orEmpty(),
                     log.id,
                     log.dateTime.toString(),
                     log.odometer.toStorageString(),
@@ -527,6 +547,7 @@ object FuelCalculator {
 
     fun efficiencyUnitLabel(vehicle: Vehicle): String =
         when {
+            preferredEfficiencyEntryType(vehicle) == EnergyEntryType.CHARGING -> "${vehicle.distanceUnit.displayLabel}/${vehicle.energyUnit.displayLabel}"
             vehicle.distanceUnit == DistanceUnit.MILES && vehicle.volumeUnit == VolumeUnit.GALLONS -> "MPG"
             vehicle.distanceUnit == DistanceUnit.KILOMETERS && vehicle.volumeUnit == VolumeUnit.LITERS -> "L/100km"
             else -> "${vehicle.distanceUnit.displayLabel}/${vehicle.volumeUnit.displayLabel}"
@@ -536,11 +557,57 @@ object FuelCalculator {
 
     fun volumeUnitLabel(vehicle: Vehicle): String = vehicle.volumeUnit.displayLabel
 
+    fun entryUnitLabel(vehicle: Vehicle, entryType: EnergyEntryType): String =
+        when (entryType) {
+            EnergyEntryType.FUEL -> vehicle.volumeUnit.displayLabel
+            EnergyEntryType.CHARGING -> vehicle.energyUnit.displayLabel
+        }
+
+    fun energyLogLabel(vehicle: Vehicle): String =
+        when {
+            vehicle.vehicleType.usesLiquidFuel && vehicle.vehicleType.usesBattery -> "Energy Log"
+            vehicle.vehicleType.usesBattery -> "Charging Log"
+            else -> "Fuel Log"
+        }
+
+    fun preferredEfficiencyEntryType(vehicle: Vehicle): EnergyEntryType =
+        if (vehicle.vehicleType.usesBattery && !vehicle.vehicleType.usesLiquidFuel) {
+            EnergyEntryType.CHARGING
+        } else {
+            EnergyEntryType.FUEL
+        }
+
     private fun statusSortRank(status: MaintenanceStatus): Int =
         when (status) {
             MaintenanceStatus.OVERDUE -> 0
             MaintenanceStatus.DUE_SOON -> 1
-            MaintenanceStatus.GOOD -> 2
+            MaintenanceStatus.UNKNOWN -> 2
+            MaintenanceStatus.GOOD -> 3
+        }
+
+    private fun recommendationRank(state: MaintenanceItemState): Int =
+        when (state.status) {
+            MaintenanceStatus.OVERDUE -> when (state.item.importance) {
+                MaintenanceImportance.CRITICAL -> 0
+                MaintenanceImportance.HIGH -> 1
+                else -> 2
+            }
+            MaintenanceStatus.DUE_SOON -> when (state.item.importance) {
+                MaintenanceImportance.CRITICAL -> 3
+                MaintenanceImportance.HIGH -> 4
+                else -> 5
+            }
+            MaintenanceStatus.UNKNOWN -> 6
+            MaintenanceStatus.GOOD -> 7
+        }
+
+    private fun recommendationProgressValue(state: MaintenanceItemState): Double =
+        when (state.status) {
+            MaintenanceStatus.OVERDUE,
+            MaintenanceStatus.DUE_SOON,
+            -> state.urgencySortValue
+            MaintenanceStatus.UNKNOWN -> Double.NEGATIVE_INFINITY
+            MaintenanceStatus.GOOD -> state.urgencySortValue
         }
 
     private fun calculateTotalDistance(entries: List<FuelEntry>): Double? {
@@ -551,7 +618,9 @@ object FuelCalculator {
     }
 
     private fun calculateEfficiencyValue(vehicle: Vehicle, distance: Double, fuelUsed: Double): Double =
-        if (vehicle.distanceUnit == DistanceUnit.KILOMETERS && vehicle.volumeUnit == VolumeUnit.LITERS) {
+        if (preferredEfficiencyEntryType(vehicle) == EnergyEntryType.CHARGING) {
+            distance / fuelUsed
+        } else if (vehicle.distanceUnit == DistanceUnit.KILOMETERS && vehicle.volumeUnit == VolumeUnit.LITERS) {
             (fuelUsed / distance) * 100.0
         } else {
             distance / fuelUsed
@@ -559,6 +628,10 @@ object FuelCalculator {
 
     private fun estimateRemainingRange(vehicle: Vehicle, lastEfficiency: Double?): Double? {
         val efficiency = lastEfficiency?.takeIf { it.isFinite() && it > 0.0 } ?: return null
+        if (preferredEfficiencyEntryType(vehicle) == EnergyEntryType.CHARGING) {
+            val batteryCapacity = vehicle.batteryCapacity?.takeIf { it.isFinite() && it > 0.0 } ?: return null
+            return batteryCapacity * efficiency
+        }
         if (!vehicle.tankCapacity.isFinite() || vehicle.tankCapacity <= 0.0) return null
         return if (vehicle.distanceUnit == DistanceUnit.KILOMETERS && vehicle.volumeUnit == VolumeUnit.LITERS) {
             (vehicle.tankCapacity / efficiency) * 100.0
@@ -580,7 +653,7 @@ object FuelCalculator {
             pricePerUnit.isFinite() &&
             pricePerUnit >= 0.0
 
-    private fun Iterable<FuelEntry>.sumFuelCostSafe(selector: (FuelEntry) -> Double): Double =
+    private fun Iterable<FuelEntry>.sumEnergyCostSafe(selector: (FuelEntry) -> Double): Double =
         fold(0.0) { total, entry ->
             val value = selector(entry)
             if (value.isFinite() && value >= 0.0) total + value else total

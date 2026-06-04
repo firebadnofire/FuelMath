@@ -29,13 +29,23 @@ object FuelJsonCodec {
             appendComma()
             appendField("currentMileage", vehicle.currentMileage)
             appendComma()
+            appendField("vehicleType", vehicle.vehicleType.storageValue)
+            appendComma()
             appendField("fuelType", vehicle.fuelType.storageValue)
             appendComma()
             appendField("tankCapacity", vehicle.tankCapacity)
             appendComma()
+            appendNullableField("batteryCapacity", vehicle.batteryCapacity)
+            appendComma()
+            appendNullableField("recommendedFrontTirePsi", vehicle.recommendedFrontTirePsi)
+            appendComma()
+            appendNullableField("recommendedRearTirePsi", vehicle.recommendedRearTirePsi)
+            appendComma()
             appendField("distanceUnit", vehicle.distanceUnit.storageValue)
             appendComma()
             appendField("volumeUnit", vehicle.volumeUnit.storageValue)
+            appendComma()
+            appendField("energyUnit", vehicle.energyUnit.storageValue)
             appendObjectEnd()
         }
         appendComma()
@@ -54,6 +64,8 @@ object FuelJsonCodec {
             appendField("pricePerUnit", entry.pricePerUnit)
             appendComma()
             appendField("isFullTank", entry.isFullTank)
+            appendComma()
+            appendField("entryType", entry.entryType.storageValue)
             appendObjectEnd()
         }
         appendComma()
@@ -78,12 +90,6 @@ object FuelJsonCodec {
             appendNullableField("intervalMiles", item.intervalMiles)
             appendComma()
             appendNullableField("intervalTimeDays", item.intervalTimeDays)
-            appendComma()
-            appendNullableField("lastServiceMileage", item.lastServiceMileage)
-            appendComma()
-            appendNullableField("lastServiceDate", item.lastServiceDate?.toString())
-            appendComma()
-            appendNullableField("lastServiceCost", item.lastServiceCost)
             appendComma()
             appendField("notes", item.notes)
             appendComma()
@@ -120,12 +126,15 @@ object FuelJsonCodec {
 
         return when (schemaVersion) {
             1 -> decodeSchemaV1(root)
-            CURRENT_SCHEMA_VERSION -> decodeSchemaV2(root)
+            2 -> decodeSchemaV2(root)
+            3 -> decodeSchemaV3(root)
+            4 -> decodeSchemaV4(root)
+            CURRENT_SCHEMA_VERSION -> decodeSchemaV5(root)
             else -> throw IllegalArgumentException("Unsupported backup schema version: $schemaVersion")
         }
     }
 
-    private fun decodeSchemaV2(root: Map<String, Any?>): FuelMathData {
+    private fun decodeSchemaV5(root: Map<String, Any?>): FuelMathData {
         val settingsObject = root.optionalObject("settings")
         val settings = AppSettings(
             dueSoonThresholdPercent = settingsObject?.optionalNumber("dueSoonThresholdPercent")?.toInt() ?: 10,
@@ -142,9 +151,14 @@ object FuelJsonCodec {
                 year = item.optionalNumber("year")?.toInt(),
                 currentMileage = item.optionalNumber("currentMileage") ?: 0.0,
                 fuelType = FuelType.fromStorage(item.optionalString("fuelType") ?: FuelType.GASOLINE.storageValue),
+                vehicleType = parseVehicleType(item),
                 tankCapacity = item.requiredNumber("tankCapacity"),
+                batteryCapacity = item.optionalNumber("batteryCapacity"),
+                recommendedFrontTirePsi = item.optionalNumber("recommendedFrontTirePsi"),
+                recommendedRearTirePsi = item.optionalNumber("recommendedRearTirePsi"),
                 distanceUnit = DistanceUnit.fromStorage(item.requiredString("distanceUnit")),
                 volumeUnit = VolumeUnit.fromStorage(item.requiredString("volumeUnit")),
+                energyUnit = EnergyUnit.fromStorage(item.optionalString("energyUnit") ?: EnergyUnit.KILOWATT_HOURS.storageValue),
             )
         }
 
@@ -168,12 +182,9 @@ object FuelJsonCodec {
                 name = item.requiredString("name"),
                 intervalMiles = item.optionalNumber("intervalMiles"),
                 intervalTimeDays = item.optionalNumber("intervalTimeDays")?.toInt(),
-                lastServiceMileage = item.optionalNumber("lastServiceMileage"),
-                lastServiceDate = item.optionalString("lastServiceDate")?.let(LocalDate::parse),
-                lastServiceCost = item.optionalNumber("lastServiceCost"),
                 notes = item.optionalString("notes").orEmpty(),
                 importance = MaintenanceImportance.fromStorage(
-                    item.optionalString("importance") ?: MaintenanceImportance.NORMAL.storageValue,
+                    item.optionalString("importance") ?: MaintenanceImportance.MEDIUM.storageValue,
                 ),
             )
         }
@@ -204,6 +215,112 @@ object FuelJsonCodec {
         return data
     }
 
+    private fun decodeSchemaV4(root: Map<String, Any?>): FuelMathData {
+        val upgradedRoot = root.toMutableMap()
+        val upgradedVehicles = root.requiredList("vehicles").map { value ->
+            val item = value.asObject("vehicle").toMutableMap()
+            item.putIfAbsent("recommendedFrontTirePsi", null)
+            item.putIfAbsent("recommendedRearTirePsi", null)
+            item
+        }
+        upgradedRoot["vehicles"] = upgradedVehicles
+        return decodeSchemaV5(upgradedRoot)
+    }
+
+    private fun decodeSchemaV2(root: Map<String, Any?>): FuelMathData {
+        val settingsObject = root.optionalObject("settings")
+        val settings = AppSettings(
+            dueSoonThresholdPercent = settingsObject?.optionalNumber("dueSoonThresholdPercent")?.toInt() ?: 10,
+            maintenanceRemindersEnabled = settingsObject?.optionalBoolean("maintenanceRemindersEnabled") ?: false,
+        )
+
+        val vehicles = root.requiredList("vehicles").map { value ->
+            val item = value.asObject("vehicle")
+            Vehicle(
+                id = item.requiredString("id"),
+                name = item.requiredString("name"),
+                make = item.optionalString("make").orEmpty(),
+                model = item.optionalString("model").orEmpty(),
+                year = item.optionalNumber("year")?.toInt(),
+                currentMileage = item.optionalNumber("currentMileage") ?: 0.0,
+                fuelType = FuelType.fromStorage(item.optionalString("fuelType") ?: FuelType.GASOLINE.storageValue),
+                vehicleType = parseVehicleType(item),
+                tankCapacity = item.requiredNumber("tankCapacity"),
+                batteryCapacity = item.optionalNumber("batteryCapacity"),
+                recommendedFrontTirePsi = item.optionalNumber("recommendedFrontTirePsi"),
+                recommendedRearTirePsi = item.optionalNumber("recommendedRearTirePsi"),
+                distanceUnit = DistanceUnit.fromStorage(item.requiredString("distanceUnit")),
+                volumeUnit = VolumeUnit.fromStorage(item.requiredString("volumeUnit")),
+                energyUnit = EnergyUnit.fromStorage(item.optionalString("energyUnit") ?: EnergyUnit.KILOWATT_HOURS.storageValue),
+            )
+        }
+
+        val fuelEntries = parseFuelEntries(root)
+        val categories = normalizedCategories(
+            root.optionalList("maintenanceCategories").orEmpty().map { value ->
+                val item = value.asObject("maintenance category")
+                MaintenanceCategory(
+                    id = item.requiredString("id"),
+                    name = item.requiredString("name"),
+                )
+            },
+        )
+
+        val legacyBaselines = mutableListOf<LegacyMaintenanceBaseline>()
+        val maintenanceItems = root.optionalList("maintenanceItems").orEmpty().map { value ->
+            val item = value.asObject("maintenance item")
+            val itemId = item.requiredString("id")
+            val vehicleId = item.requiredString("vehicleId")
+            legacyBaselines += LegacyMaintenanceBaseline(
+                maintenanceItemId = itemId,
+                vehicleId = vehicleId,
+                lastServiceMileage = item.optionalNumber("lastServiceMileage"),
+                lastServiceDate = item.optionalString("lastServiceDate")?.let(LocalDate::parse),
+                lastServiceCost = item.optionalNumber("lastServiceCost"),
+            )
+            MaintenanceItem(
+                id = itemId,
+                vehicleId = vehicleId,
+                categoryId = item.requiredString("categoryId"),
+                name = item.requiredString("name"),
+                intervalMiles = item.optionalNumber("intervalMiles"),
+                intervalTimeDays = item.optionalNumber("intervalTimeDays")?.toInt(),
+                notes = item.optionalString("notes").orEmpty(),
+                importance = MaintenanceImportance.fromStorage(
+                    item.optionalString("importance") ?: MaintenanceImportance.MEDIUM.storageValue,
+                ),
+            )
+        }
+
+        val decodedLogs = root.optionalList("maintenanceServiceLogs").orEmpty().map { value ->
+            val item = value.asObject("maintenance service log")
+            MaintenanceServiceLog(
+                id = item.requiredString("id"),
+                vehicleId = item.requiredString("vehicleId"),
+                maintenanceItemId = item.requiredString("maintenanceItemId"),
+                dateTime = LocalDateTime.parse(item.requiredString("dateTime")),
+                odometer = item.requiredNumber("odometer"),
+                cost = item.requiredNumber("cost"),
+                notes = item.optionalString("notes").orEmpty(),
+            )
+        }
+        val synthesizedLogs = synthesizeLegacyBaselineLogs(decodedLogs, legacyBaselines)
+
+        val data = FuelMathData(
+            schemaVersion = CURRENT_SCHEMA_VERSION,
+            vehicles = vehicles,
+            fuelEntries = fuelEntries,
+            maintenanceCategories = categories,
+            maintenanceItems = maintenanceItems,
+            maintenanceServiceLogs = decodedLogs + synthesizedLogs,
+            settings = settings,
+        )
+        validateData(data)
+        return data
+    }
+
+    private fun decodeSchemaV3(root: Map<String, Any?>): FuelMathData = decodeSchemaV4(root)
+
     private fun decodeSchemaV1(root: Map<String, Any?>): FuelMathData {
         val rawVehicles = root.requiredList("vehicles").map { value ->
             val item = value.asObject("vehicle")
@@ -211,6 +328,8 @@ object FuelJsonCodec {
                 id = item.requiredString("id"),
                 name = item.requiredString("name"),
                 tankCapacity = item.requiredNumber("tankCapacity"),
+                recommendedFrontTirePsi = item.optionalNumber("recommendedFrontTirePsi"),
+                recommendedRearTirePsi = item.optionalNumber("recommendedRearTirePsi"),
                 distanceUnit = DistanceUnit.fromStorage(item.requiredString("distanceUnit")),
                 volumeUnit = VolumeUnit.fromStorage(item.requiredString("volumeUnit")),
             )
@@ -233,15 +352,11 @@ object FuelJsonCodec {
             .map { (key, entries) ->
                 val vehicleId = key.first
                 val type = key.second
-                val latest = entries.maxWith(compareBy<LegacyMaintenanceEntry> { it.dateTime }.thenBy { it.odometer })
                 MaintenanceItem(
                     id = legacyItemId(vehicleId, type),
                     vehicleId = vehicleId,
                     categoryId = MaintenanceDefaults.categoryIdForLegacyType(type),
                     name = type,
-                    lastServiceMileage = latest.odometer,
-                    lastServiceDate = latest.dateTime.toLocalDate(),
-                    lastServiceCost = latest.cost,
                     notes = "",
                     importance = MaintenanceDefaults.importanceForName(type),
                 )
@@ -293,6 +408,7 @@ object FuelJsonCodec {
                 fuelAmount = item.requiredNumber("fuelAmount"),
                 pricePerUnit = item.requiredNumber("pricePerUnit"),
                 isFullTank = item.requiredBoolean("isFullTank"),
+                entryType = EnergyEntryType.fromStorage(item.optionalString("entryType") ?: EnergyEntryType.FUEL.storageValue),
             )
         }
 
@@ -312,11 +428,24 @@ object FuelJsonCodec {
         require(data.vehicles.all { it.id.isNotBlank() && it.name.isNotBlank() }) {
             "Vehicle id and name are required"
         }
-        require(data.vehicles.all { it.tankCapacity.isFinite() && it.tankCapacity > 0.0 }) {
-            "Vehicle tank capacities must be positive"
+        require(data.vehicles.all { vehicle ->
+            (!vehicle.vehicleType.usesLiquidFuel || vehicle.tankCapacity.isFinite() && vehicle.tankCapacity > 0.0) &&
+                (vehicle.vehicleType.usesLiquidFuel || vehicle.tankCapacity.isFinite() && vehicle.tankCapacity >= 0.0) &&
+                (!vehicle.vehicleType.usesBattery || vehicle.batteryCapacity?.let { it.isFinite() && it > 0.0 } == true) &&
+                (vehicle.vehicleType.usesBattery || vehicle.batteryCapacity == null || vehicle.batteryCapacity.isFinite() && vehicle.batteryCapacity >= 0.0)
+        }) {
+            "Vehicle capacities do not match their vehicle types"
         }
         require(data.vehicles.all { it.currentMileage.isFinite() && it.currentMileage >= 0.0 }) {
             "Vehicle current mileage values cannot be negative"
+        }
+        require(
+            data.vehicles.all {
+                (it.recommendedFrontTirePsi == null || it.recommendedFrontTirePsi.isFinite() && it.recommendedFrontTirePsi > 0.0) &&
+                    (it.recommendedRearTirePsi == null || it.recommendedRearTirePsi.isFinite() && it.recommendedRearTirePsi > 0.0)
+            },
+        ) {
+            "Vehicle tire PSI reminders must be positive when present"
         }
         require(data.maintenanceCategories.all { it.id.isNotBlank() && it.name.isNotBlank() }) {
             "Maintenance category id and name are required"
@@ -336,12 +465,10 @@ object FuelJsonCodec {
         require(
             data.maintenanceItems.all { item ->
                 (item.intervalMiles == null || item.intervalMiles.isFinite() && item.intervalMiles > 0.0) &&
-                    (item.intervalTimeDays == null || item.intervalTimeDays > 0) &&
-                    (item.lastServiceMileage == null || item.lastServiceMileage.isFinite() && item.lastServiceMileage >= 0.0) &&
-                    (item.lastServiceCost == null || item.lastServiceCost.isFinite() && item.lastServiceCost >= 0.0)
+                    (item.intervalTimeDays == null || item.intervalTimeDays > 0)
             },
         ) {
-            "Maintenance items contain invalid interval or service values"
+            "Maintenance items contain invalid interval values"
         }
         require(data.maintenanceServiceLogs.all { it.vehicleId in vehicleIds && it.maintenanceItemId in itemIds }) {
             "Backup contains a maintenance service log with an unknown vehicle or item"
@@ -364,11 +491,41 @@ object FuelJsonCodec {
         return byId.values.toList()
     }
 
+    private fun parseVehicleType(item: Map<String, Any?>): VehicleType =
+        item.optionalString("vehicleType")?.let(VehicleType::fromStorage)
+            ?: VehicleType.fromFuelType(FuelType.fromStorage(item.optionalString("fuelType") ?: FuelType.GASOLINE.storageValue))
+
     private fun legacyItemId(vehicleId: String, type: String): String =
         "legacy-${vehicleId.toStableIdPart()}-${type.toStableIdPart()}-${type.hashCode().toUInt().toString(16)}"
 
     private fun legacyLogId(vehicleId: String, type: String, dateTime: LocalDateTime, odometer: Double): String =
         "legacy-log-${vehicleId.toStableIdPart()}-${type.toStableIdPart()}-${dateTime}-${odometer.toString().toStableIdPart()}"
+
+    private fun synthesizeLegacyBaselineLogs(
+        decodedLogs: List<MaintenanceServiceLog>,
+        baselines: List<LegacyMaintenanceBaseline>,
+    ): List<MaintenanceServiceLog> =
+        baselines.mapNotNull { baseline ->
+            val date = baseline.lastServiceDate
+            val odometer = baseline.lastServiceMileage
+            if (date == null || odometer == null) return@mapNotNull null
+            val alreadyPresent = decodedLogs.any { log ->
+                log.maintenanceItemId == baseline.maintenanceItemId &&
+                    log.vehicleId == baseline.vehicleId &&
+                    log.odometer == odometer &&
+                    log.dateTime.toLocalDate() == date
+            }
+            if (alreadyPresent) return@mapNotNull null
+            MaintenanceServiceLog(
+                id = "migrated-baseline-${baseline.maintenanceItemId}",
+                vehicleId = baseline.vehicleId,
+                maintenanceItemId = baseline.maintenanceItemId,
+                dateTime = date.atStartOfDay(),
+                odometer = odometer,
+                cost = baseline.lastServiceCost?.takeIf { it.isFinite() && it >= 0.0 } ?: 0.0,
+                notes = "Migrated baseline from schema v2 backup",
+            )
+        }
 
     private fun String.toStableIdPart(): String =
         lowercase()
@@ -385,6 +542,14 @@ object FuelJsonCodec {
         val type: String,
         val cost: Double,
         val notes: String,
+    )
+
+    private data class LegacyMaintenanceBaseline(
+        val maintenanceItemId: String,
+        val vehicleId: String,
+        val lastServiceMileage: Double?,
+        val lastServiceDate: LocalDate?,
+        val lastServiceCost: Double?,
     )
 
     private fun StringBuilder.appendObjectStart() {

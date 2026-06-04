@@ -13,6 +13,7 @@ import android.text.InputType
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
+import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.EditText
 import android.widget.HorizontalScrollView
@@ -85,6 +86,7 @@ class MainActivity : AppCompatActivity() {
         val root = createScreenRoot(getString(R.string.app_name))
 
         root.addSectionHeader("Vehicles")
+        root.addText("What needs attention right now? Start with the vehicles that show overdue work or need a maintenance baseline.", colorRes = R.color.text_secondary)
         root.addActions(
             "Add Vehicle" to { showAddVehicleDialog() },
             "Settings" to { showSettingsDialog() },
@@ -93,13 +95,19 @@ class MainActivity : AppCompatActivity() {
         )
 
         if (data.vehicles.isEmpty()) {
-            root.addText("No vehicles yet.", 16f, Typeface.NORMAL, R.color.text_secondary)
+            root.addText("No vehicles yet. Add one to start tracking maintenance, fuel, and operating costs offline.", 16f, Typeface.NORMAL, R.color.text_secondary)
             return
         }
 
-        data.vehicles.sortedBy { it.name.lowercase() }.forEach { vehicle ->
-            root.addView(buildVehicleCard(FuelCalculator.buildVehicleSummary(vehicle, data)))
-        }
+        data.vehicles
+            .map { FuelCalculator.buildVehicleSummary(it, data) }
+            .sortedWith(
+                compareByDescending<VehicleSummary> { it.overdueCount }
+                    .thenByDescending { it.dueSoonCount }
+                    .thenByDescending { it.unknownCount }
+                    .thenBy { it.vehicle.name.lowercase() },
+            )
+            .forEach { summary -> root.addView(buildVehicleCard(summary)) }
     }
 
     private fun renderVehicleDetail(vehicleId: String) {
@@ -118,15 +126,18 @@ class MainActivity : AppCompatActivity() {
         val states = FuelCalculator.calculateMaintenanceStates(vehicle, data)
         val summary = FuelCalculator.buildVehicleSummary(vehicle, data)
 
-        root.addActions(
-            "Add Fuel" to { showAddFuelEntryDialog(vehicle) },
-            "Add Item" to { showMaintenanceItemDialog(vehicle) },
-            "Log Service" to { showLogServiceDialog(vehicle) },
-            "Settings" to { showSettingsDialog() },
-        )
+        root.addActions(*vehicleDetailActions(vehicle))
 
         root.addView(buildSummaryCard(summary))
         summary.smartRecommendation?.let { root.addView(buildRecommendationCard(vehicle, it)) }
+
+        root.addSectionHeader("Needs Baseline")
+        addMaintenanceStateList(
+            root = root,
+            vehicle = vehicle,
+            states = states.filter { it.status == MaintenanceStatus.UNKNOWN },
+            emptyMessage = "All active maintenance items have a service baseline.",
+        )
 
         root.addSectionHeader("Overdue")
         addMaintenanceStateList(
@@ -171,7 +182,7 @@ class MainActivity : AppCompatActivity() {
         )
         root.addView(
             buildChartCard(
-                title = "Fuel Cost",
+                title = energyCostTitle(vehicle),
                 unitLabel = currencyFormatter.currency?.currencyCode.orEmpty(),
                 points = FuelCalculator.buildCostOverTime(fuelEntries),
             ),
@@ -192,9 +203,9 @@ class MainActivity : AppCompatActivity() {
         )
         root.addView(buildSeasonalCard(vehicle, fuelEntries))
 
-        root.addSectionHeader("Fuel Log")
+        root.addSectionHeader(FuelCalculator.energyLogLabel(vehicle))
         if (fuelEntries.isEmpty()) {
-            root.addText("No fuel entries yet.", 16f, Typeface.NORMAL, R.color.text_secondary)
+            root.addText("No ${FuelCalculator.energyLogLabel(vehicle).lowercase(Locale.US)} entries yet.", 16f, Typeface.NORMAL, R.color.text_secondary)
         } else {
             val distances = FuelCalculator.calculateEntryDistances(fuelEntries)
                 .associate { it.entry.id to it.distanceFromPrevious }
@@ -232,27 +243,27 @@ class MainActivity : AppCompatActivity() {
         val vehicle = summary.vehicle
         return buildCard(clickable = true).apply {
             setOnClickListener { renderVehicleDetail(vehicle.id) }
+            setOnLongClickListener {
+                confirmDeleteVehicle(vehicle)
+                true
+            }
             val content = cardContent()
             content.addText(vehicle.name, 20f, Typeface.BOLD)
             val descriptor = vehicleDescriptor(vehicle)
             if (descriptor.isNotBlank()) content.addText(descriptor, colorRes = R.color.text_secondary)
             content.addText("Health score: ${summary.healthScore}%")
             content.addText("Current mileage: ${formatDistance(vehicle, summary.currentMileage)}")
-            content.addText("Maintenance: ${summary.overdueCount} overdue, ${summary.dueSoonCount} due soon")
+            content.addText(formatTirePsiReminder(vehicle))
+            content.addText("Maintenance: ${summary.overdueCount} overdue, ${summary.dueSoonCount} due soon, ${summary.unknownCount} needs baseline")
             content.addText("Recommendation: ${formatRecommendation(summary.smartRecommendation)}")
             content.addText("Efficiency: ${formatEfficiency(vehicle, summary.lastEfficiency)}")
             content.addText("Total cost: ${currencyFormatter.format(summary.totalCost)}")
             content.addText("Cost per ${FuelCalculator.distanceUnitLabel(vehicle)}: ${formatCurrencyPerDistance(summary.costPerDistance)}")
             content.addText(
-                "Fuel entries: ${summary.fuelEntryCount}   Items: ${summary.maintenanceItemCount}   Services: ${summary.maintenanceServiceLogCount}",
+                "${entryCountSummary(summary)}   Items: ${summary.maintenanceItemCount}   Services: ${summary.maintenanceServiceLogCount}",
                 colorRes = R.color.text_secondary,
             )
-            content.addActions(
-                "Open" to { renderVehicleDetail(vehicle.id) },
-                "Add Fuel" to { showAddFuelEntryDialog(vehicle) },
-                "Log Service" to { showLogServiceDialog(vehicle) },
-                "Delete" to { confirmDeleteVehicle(vehicle) },
-            )
+            content.addActions(*vehicleCardActions(vehicle))
             addView(content)
         }
     }
@@ -264,14 +275,18 @@ class MainActivity : AppCompatActivity() {
             content.addText("Summary", 18f, Typeface.BOLD)
             content.addText("Health score: ${summary.healthScore}%")
             content.addText("Current mileage: ${formatDistance(vehicle, summary.currentMileage)}")
+            content.addText(formatTirePsiReminder(vehicle))
+            content.addText("Maintenance: ${summary.overdueCount} overdue, ${summary.dueSoonCount} due soon, ${summary.unknownCount} needs baseline")
             content.addText("Efficiency: ${formatEfficiency(vehicle, summary.lastEfficiency)}")
-            content.addText("Total distance: ${formatDistance(vehicle, summary.totalDistance)}")
-            content.addText("Fuel cost: ${currencyFormatter.format(summary.totalFuelCost)}")
+            content.addText("Tracked distance: ${formatDistance(vehicle, summary.totalDistance)}")
+            if (vehicle.vehicleType.usesLiquidFuel) content.addText("Fuel cost: ${currencyFormatter.format(summary.totalFuelCost)}")
+            if (vehicle.vehicleType.usesBattery) content.addText("Charging cost: ${currencyFormatter.format(summary.totalChargingCost)}")
             content.addText("Maintenance cost: ${currencyFormatter.format(summary.totalMaintenanceCost)}")
             content.addText("Total cost: ${currencyFormatter.format(summary.totalCost)}")
             content.addText("Cost per ${FuelCalculator.distanceUnitLabel(vehicle)}: ${formatCurrencyPerDistance(summary.costPerDistance)}")
             content.addText("Estimated range: ${formatDistance(vehicle, summary.estimatedRange)}")
-            content.addText("Tank capacity: ${formatNumber(vehicle.tankCapacity, 2)} ${FuelCalculator.volumeUnitLabel(vehicle)}")
+            if (vehicle.vehicleType.usesLiquidFuel) content.addText("Tank capacity: ${formatNumber(vehicle.tankCapacity, 2)} ${FuelCalculator.volumeUnitLabel(vehicle)}")
+            if (vehicle.vehicleType.usesBattery) content.addText("Battery capacity: ${formatDistanceAgnostic(vehicle.batteryCapacity)} ${vehicle.energyUnit.displayLabel}")
             addView(content)
         }
     }
@@ -279,7 +294,7 @@ class MainActivity : AppCompatActivity() {
     private fun buildRecommendationCard(vehicle: Vehicle, state: MaintenanceItemState): View =
         buildCard().apply {
             val content = cardContent()
-            content.addText("Smart Recommendation", 18f, Typeface.BOLD)
+            content.addText("What Needs Attention Now", 18f, Typeface.BOLD)
             content.addText("${state.item.name}: ${state.status.displayLabel}")
             content.addText(formatNextDue(vehicle, state), colorRes = R.color.text_secondary)
             content.addActions("Log Service" to { showLogServiceDialog(vehicle, state.item) })
@@ -290,7 +305,7 @@ class MainActivity : AppCompatActivity() {
         buildCard().apply {
             val comparison = FuelCalculator.buildSeasonalEfficiencyComparison(vehicle, fuelEntries)
             val content = cardContent()
-            content.addText("Seasonal MPG", 18f, Typeface.BOLD)
+            content.addText("Seasonal Efficiency", 18f, Typeface.BOLD)
             content.addText("${comparison.currentSeason}: ${formatEfficiency(vehicle, comparison.currentSeasonAverage)}")
             content.addText("Overall: ${formatEfficiency(vehicle, comparison.overallAverage)}", colorRes = R.color.text_secondary)
             addView(content)
@@ -298,14 +313,39 @@ class MainActivity : AppCompatActivity() {
 
     private fun buildChartCard(title: String, unitLabel: String, points: List<ChartPoint>): View =
         buildCard().apply {
-            val chart = LineChartView(this@MainActivity).apply {
-                setChartData(title, unitLabel, points)
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    180.dp(),
-                )
+            val content = cardContent()
+            content.addText(title, 18f, Typeface.BOLD, bottomMarginDp = 2)
+            content.addText(
+                chartPrimarySummary(unitLabel, points),
+                22f,
+                Typeface.BOLD,
+                bottomMarginDp = 2,
+            )
+            content.addText(
+                chartSecondarySummary(title, unitLabel, points),
+                13f,
+                Typeface.NORMAL,
+                R.color.text_secondary,
+                bottomMarginDp = if (points.size >= 2) 10 else 0,
+            )
+
+            if (points.size >= 2) {
+                val chart = LineChartView(this@MainActivity).apply {
+                    setChartData(
+                        unitLabel = unitLabel,
+                        points = points,
+                        showArea = title.contains("Cost", ignoreCase = true),
+                        showPointLabels = true,
+                    )
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        132.dp(),
+                    )
+                }
+                content.addView(chart)
             }
-            addView(chart)
+
+            addView(content)
         }
 
     private fun buildMaintenanceItemCard(vehicle: Vehicle, state: MaintenanceItemState): View =
@@ -315,7 +355,7 @@ class MainActivity : AppCompatActivity() {
             content.addText(item.name, 17f, Typeface.BOLD)
             content.addText("${state.category.name}   ${state.status.displayLabel}   ${item.importance.displayLabel} importance")
             content.addText(formatInterval(vehicle, item), colorRes = R.color.text_secondary)
-            content.addText(formatLastService(vehicle, item), colorRes = R.color.text_secondary)
+            content.addText(formatLastService(vehicle, state), colorRes = R.color.text_secondary)
             content.addText(formatNextDue(vehicle, state), colorRes = R.color.text_secondary)
             if (item.notes.isNotBlank()) content.addText(item.notes, colorRes = R.color.text_secondary)
             content.addActions(
@@ -331,11 +371,11 @@ class MainActivity : AppCompatActivity() {
             val content = cardContent()
             content.addText(entry.dateTime.format(dateTimeFormatter), 17f, Typeface.BOLD)
             content.addText("Odometer: ${formatDistance(vehicle, entry.odometer)}")
-            content.addText("Fuel: ${formatNumber(entry.fuelAmount, 3)} ${FuelCalculator.volumeUnitLabel(vehicle)}")
-            content.addText("Price: ${currencyFormatter.format(entry.pricePerUnit)} per ${FuelCalculator.volumeUnitLabel(vehicle)}")
+            content.addText("${entryAmountLabel(entry.entryType)}: ${formatNumber(entry.fuelAmount, 3)} ${FuelCalculator.entryUnitLabel(vehicle, entry.entryType)}")
+            content.addText("Price: ${currencyFormatter.format(entry.pricePerUnit)} per ${FuelCalculator.entryUnitLabel(vehicle, entry.entryType)}")
             content.addText("Total: ${currencyFormatter.format(entry.totalCost)}")
             content.addText("Distance since previous: ${formatDistance(vehicle, distance)}")
-            content.addText(if (entry.isFullTank) "Full tank" else "Partial fill", colorRes = R.color.text_secondary)
+            content.addText(fullEntryText(entry), colorRes = R.color.text_secondary)
             content.addActions("Delete" to { confirmDeleteFuelEntry(vehicle, entry) })
             addView(content)
         }
@@ -359,9 +399,12 @@ class MainActivity : AppCompatActivity() {
         val modelInput = createInput("Model", InputType.TYPE_CLASS_TEXT)
         val yearInput = createInput("Year", InputType.TYPE_CLASS_NUMBER)
         val mileageInput = createInput("Current mileage", decimalInputType()).apply { setText("0") }
+        val frontTirePsiInput = createInput("Front tire PSI", decimalInputType())
+        val rearTirePsiInput = createInput("Rear tire PSI", decimalInputType())
         val tankInput = createInput("Tank capacity", decimalInputType())
-        val fuelTypes = FuelType.entries.toList()
-        val fuelTypeSpinner = createSpinner(fuelTypes.map { it.displayLabel })
+        val batteryInput = createInput("Battery capacity", decimalInputType())
+        val vehicleTypes = VehicleType.entries.toList()
+        val vehicleTypeSpinner = createSpinner(vehicleTypes.map { it.displayLabel })
         val distanceUnit = createChoiceControl(
             listOf(
                 "Miles" to DistanceUnit.MILES,
@@ -374,6 +417,9 @@ class MainActivity : AppCompatActivity() {
                 "Liters" to VolumeUnit.LITERS,
             ),
         )
+        val tankLayout = labeledView("Tank capacity (${VolumeUnit.GALLONS.displayLabel})", tankInput)
+        val batteryLayout = labeledView("Battery capacity (${EnergyUnit.KILOWATT_HOURS.displayLabel})", batteryInput)
+        val volumeUnitLayout = labeledView("Fuel volume unit", volumeUnit.view)
 
         val form = dialogForm().apply {
             addView(labeledView("Name", nameInput))
@@ -381,11 +427,37 @@ class MainActivity : AppCompatActivity() {
             addView(labeledView("Model", modelInput))
             addView(labeledView("Year", yearInput))
             addView(labeledView("Current mileage", mileageInput))
-            addView(labeledView("Fuel type", fuelTypeSpinner))
-            addView(labeledView("Tank capacity", tankInput))
+            addView(labeledView("Front tire PSI", frontTirePsiInput))
+            addView(labeledView("Rear tire PSI", rearTirePsiInput))
+            addView(labeledView("Vehicle type", vehicleTypeSpinner))
+            addView(tankLayout)
+            addView(batteryLayout)
             addView(labeledView("Distance unit", distanceUnit.view))
-            addView(labeledView("Volume unit", volumeUnit.view))
+            addView(volumeUnitLayout)
         }
+
+        fun selectedVehicleType(): VehicleType = vehicleTypes[vehicleTypeSpinner.selectedItemPosition]
+
+        fun updateVehicleTypeFields(type: VehicleType) {
+            tankLayout.visibility = if (type.usesLiquidFuel) View.VISIBLE else View.GONE
+            volumeUnitLayout.visibility = if (type.usesLiquidFuel) View.VISIBLE else View.GONE
+            batteryLayout.visibility = if (type.usesBattery) View.VISIBLE else View.GONE
+            if (type.usesLiquidFuel) {
+                tankInput.hint = "Tank capacity"
+            }
+            if (type.usesBattery) {
+                batteryInput.hint = "Battery capacity"
+            }
+        }
+
+        vehicleTypeSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                updateVehicleTypeFields(vehicleTypes[position])
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
+        }
+        updateVehicleTypeFields(selectedVehicleType())
 
         val dialog = MaterialAlertDialogBuilder(this)
             .setTitle("Add Vehicle")
@@ -397,10 +469,22 @@ class MainActivity : AppCompatActivity() {
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val name = nameInput.text.toString().trim()
-                val tankCapacity = parsePositiveDouble(tankInput, "Tank capacity") ?: return@setOnClickListener
                 val currentMileage = parseNonNegativeDouble(mileageInput, "Current mileage") ?: return@setOnClickListener
                 val parsedYear = parseOptionalYear(yearInput) ?: return@setOnClickListener
                 val year = parsedYear.value
+                val frontTirePsi = parsePositiveDouble(frontTirePsiInput, "Front tire PSI") ?: return@setOnClickListener
+                val rearTirePsi = parsePositiveDouble(rearTirePsiInput, "Rear tire PSI") ?: return@setOnClickListener
+                val vehicleType = selectedVehicleType()
+                val tankCapacity = if (vehicleType.usesLiquidFuel) {
+                    parsePositiveDouble(tankInput, "Tank capacity") ?: return@setOnClickListener
+                } else {
+                    0.0
+                }
+                val batteryCapacity = if (vehicleType.usesBattery) {
+                    parsePositiveDouble(batteryInput, "Battery capacity") ?: return@setOnClickListener
+                } else {
+                    null
+                }
                 if (name.isBlank()) {
                     showToast("Vehicle name is required.")
                     return@setOnClickListener
@@ -413,12 +497,26 @@ class MainActivity : AppCompatActivity() {
                     model = modelInput.text.toString().trim(),
                     year = year,
                     currentMileage = currentMileage,
-                    fuelType = fuelTypes[fuelTypeSpinner.selectedItemPosition],
+                    fuelType = fuelTypeForVehicleType(vehicleType),
+                    vehicleType = vehicleType,
                     tankCapacity = tankCapacity,
+                    batteryCapacity = batteryCapacity,
+                    recommendedFrontTirePsi = frontTirePsi,
+                    recommendedRearTirePsi = rearTirePsi,
                     distanceUnit = distanceUnit.selected(),
                     volumeUnit = volumeUnit.selected(),
+                    energyUnit = EnergyUnit.KILOWATT_HOURS,
                 )
-                if (persistData(data.copy(vehicles = data.vehicles + vehicle), "Vehicle saved.")) {
+                val seededMaintenanceItems = MaintenanceDefaults.templatesForVehicleType(vehicleType)
+                    .map { template -> template.toMaintenanceItem(vehicle.id) }
+                if (persistData(
+                        data.copy(
+                            vehicles = data.vehicles + vehicle,
+                            maintenanceItems = data.maintenanceItems + seededMaintenanceItems,
+                        ),
+                        "Vehicle saved.",
+                    )
+                ) {
                     dialog.dismiss()
                     renderMainScreen()
                 }
@@ -427,7 +525,15 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    private fun showAddFuelEntryDialog(vehicle: Vehicle) {
+    private fun showAddFuelEntryDialog(vehicle: Vehicle, entryType: EnergyEntryType = EnergyEntryType.FUEL) {
+        if (entryType == EnergyEntryType.FUEL && !vehicle.vehicleType.usesLiquidFuel) {
+            showToast("Fuel logs are not available for this vehicle type.")
+            return
+        }
+        if (entryType == EnergyEntryType.CHARGING && !vehicle.vehicleType.usesBattery) {
+            showToast("Charging logs are not available for this vehicle type.")
+            return
+        }
         val now = LocalDateTime.now()
         val dateInput = createInput("Date", InputType.TYPE_CLASS_DATETIME).apply {
             setText(now.toLocalDate().format(inputDateFormatter))
@@ -438,10 +544,10 @@ class MainActivity : AppCompatActivity() {
         val odometerInput = createInput("Odometer", decimalInputType()).apply {
             setText(formatPlainNumber(FuelCalculator.buildVehicleSummary(vehicle, data).currentMileage))
         }
-        val fuelInput = createInput("Fuel amount", decimalInputType())
-        val priceInput = createInput("Price per ${FuelCalculator.volumeUnitLabel(vehicle)}", decimalInputType())
+        val fuelInput = createInput(entryAmountLabel(entryType), decimalInputType())
+        val priceInput = createInput("Price per ${FuelCalculator.entryUnitLabel(vehicle, entryType)}", decimalInputType())
         val fullTankSwitch = SwitchMaterial(this).apply {
-            text = "Full tank"
+            text = if (entryType == EnergyEntryType.CHARGING) "Full charge" else "Full tank"
             isChecked = true
             setTextColor(color(R.color.text_primary))
         }
@@ -450,13 +556,13 @@ class MainActivity : AppCompatActivity() {
             addView(labeledView("Date (YYYY-MM-DD)", dateInput))
             addView(labeledView("Time (HH:MM)", timeInput))
             addView(labeledView("Odometer (${FuelCalculator.distanceUnitLabel(vehicle)})", odometerInput))
-            addView(labeledView("Fuel amount (${FuelCalculator.volumeUnitLabel(vehicle)})", fuelInput))
-            addView(labeledView("Price per ${FuelCalculator.volumeUnitLabel(vehicle)}", priceInput))
+            addView(labeledView("${entryAmountLabel(entryType)} (${FuelCalculator.entryUnitLabel(vehicle, entryType)})", fuelInput))
+            addView(labeledView("Price per ${FuelCalculator.entryUnitLabel(vehicle, entryType)}", priceInput))
             addView(fullTankSwitch)
         }
 
         val dialog = MaterialAlertDialogBuilder(this)
-            .setTitle("Add Fuel")
+            .setTitle(if (entryType == EnergyEntryType.CHARGING) "Add Charging" else "Add Fuel")
             .setView(scrollDialogView(form))
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Save", null)
@@ -466,7 +572,7 @@ class MainActivity : AppCompatActivity() {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val dateTime = parseDateTime(dateInput, timeInput) ?: return@setOnClickListener
                 val odometer = parseNonNegativeDouble(odometerInput, "Odometer") ?: return@setOnClickListener
-                val fuelAmount = parsePositiveDouble(fuelInput, "Fuel amount") ?: return@setOnClickListener
+                val fuelAmount = parsePositiveDouble(fuelInput, entryAmountLabel(entryType)) ?: return@setOnClickListener
                 val pricePerUnit = parseNonNegativeDouble(priceInput, "Price per unit") ?: return@setOnClickListener
 
                 val entry = FuelEntry(
@@ -477,12 +583,13 @@ class MainActivity : AppCompatActivity() {
                     fuelAmount = fuelAmount,
                     pricePerUnit = pricePerUnit,
                     isFullTank = fullTankSwitch.isChecked,
+                    entryType = entryType,
                 )
                 val updated = data.copy(
                     vehicles = data.vehicles.updateVehicleMileage(vehicle.id, odometer),
                     fuelEntries = data.fuelEntries + entry,
                 )
-                if (persistData(updated, "Fuel entry saved.")) {
+                if (persistData(updated, if (entryType == EnergyEntryType.CHARGING) "Charging entry saved." else "Fuel entry saved.")) {
                     dialog.dismiss()
                     renderVehicleDetail(vehicle.id)
                 }
@@ -501,22 +608,13 @@ class MainActivity : AppCompatActivity() {
         )
         val importanceSpinner = createSpinner(
             importances.map { it.displayLabel },
-            importances.indexOf(existing?.importance ?: MaintenanceImportance.NORMAL).takeIf { it >= 0 } ?: 0,
+            importances.indexOf(existing?.importance ?: MaintenanceImportance.MEDIUM).takeIf { it >= 0 } ?: 0,
         )
         val intervalMilesInput = createInput("Interval miles", decimalInputType()).apply {
             setText(existing?.intervalMiles?.let(::formatPlainNumber).orEmpty())
         }
         val intervalDaysInput = createInput("Interval days", InputType.TYPE_CLASS_NUMBER).apply {
             setText(existing?.intervalTimeDays?.toString().orEmpty())
-        }
-        val lastMileageInput = createInput("Last service mileage", decimalInputType()).apply {
-            setText(existing?.lastServiceMileage?.let(::formatPlainNumber).orEmpty())
-        }
-        val lastDateInput = createInput("Last service date", InputType.TYPE_CLASS_DATETIME).apply {
-            setText(existing?.lastServiceDate?.format(inputDateFormatter).orEmpty())
-        }
-        val lastCostInput = createInput("Last service cost", decimalInputType()).apply {
-            setText(existing?.lastServiceCost?.let(::formatPlainNumber).orEmpty())
         }
         val notesInput = createInput("Notes", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE).apply {
             minLines = 2
@@ -529,9 +627,6 @@ class MainActivity : AppCompatActivity() {
             addView(labeledView("Importance", importanceSpinner))
             addView(labeledView("Interval miles", intervalMilesInput))
             addView(labeledView("Interval days", intervalDaysInput))
-            addView(labeledView("Last service mileage", lastMileageInput))
-            addView(labeledView("Last service date (YYYY-MM-DD)", lastDateInput))
-            addView(labeledView("Last service cost", lastCostInput))
             addView(labeledView("Notes", notesInput))
         }
 
@@ -551,9 +646,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 val parsedIntervalMiles = parseOptionalPositiveDouble(intervalMilesInput, "Interval miles") ?: return@setOnClickListener
                 val parsedIntervalDays = parseOptionalPositiveInt(intervalDaysInput, "Interval days") ?: return@setOnClickListener
-                val parsedLastMileage = parseOptionalNonNegativeDouble(lastMileageInput, "Last service mileage") ?: return@setOnClickListener
-                val parsedLastDate = parseOptionalDate(lastDateInput, "Last service date") ?: return@setOnClickListener
-                val parsedLastCost = parseOptionalNonNegativeDouble(lastCostInput, "Last service cost") ?: return@setOnClickListener
                 val item = MaintenanceItem(
                     id = existing?.id ?: UUID.randomUUID().toString(),
                     vehicleId = vehicle.id,
@@ -561,9 +653,6 @@ class MainActivity : AppCompatActivity() {
                     name = name,
                     intervalMiles = parsedIntervalMiles.value,
                     intervalTimeDays = parsedIntervalDays.value,
-                    lastServiceMileage = parsedLastMileage.value,
-                    lastServiceDate = parsedLastDate.value,
-                    lastServiceCost = parsedLastCost.value,
                     notes = notesInput.text.toString().trim(),
                     importance = importances[importanceSpinner.selectedItemPosition],
                 )
@@ -640,20 +729,8 @@ class MainActivity : AppCompatActivity() {
                     cost = cost,
                     notes = notesInput.text.toString().trim(),
                 )
-                val updatedItems = data.maintenanceItems.map {
-                    if (it.id == item.id) {
-                        it.copy(
-                            lastServiceMileage = odometer,
-                            lastServiceDate = dateTime.toLocalDate(),
-                            lastServiceCost = cost,
-                        )
-                    } else {
-                        it
-                    }
-                }
                 val updated = data.copy(
                     vehicles = data.vehicles.updateVehicleMileage(vehicle.id, odometer),
-                    maintenanceItems = updatedItems,
                     maintenanceServiceLogs = data.maintenanceServiceLogs + log,
                 )
                 if (persistData(updated, "Maintenance logged.")) {
@@ -718,7 +795,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Delete Vehicle")
             .setMessage("Delete ${vehicle.name} and all of its fuel entries, maintenance items, and service logs?")
             .setNegativeButton("Cancel", null)
-            .setPositiveButton("Delete") { _, _ ->
+            .setPositiveButton("Yes") { _, _ ->
                 val itemIds = data.maintenanceItems.filter { it.vehicleId == vehicle.id }.map { it.id }.toSet()
                 val updated = data.copy(
                     vehicles = data.vehicles.filterNot { it.id == vehicle.id },
@@ -767,13 +844,8 @@ class MainActivity : AppCompatActivity() {
             .setMessage("Delete the service log from ${log.dateTime.format(dateFormatter)}?")
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Delete") { _, _ ->
-                val remainingLogs = data.maintenanceServiceLogs.filterNot { it.id == log.id }
-                val updatedItems = data.maintenanceItems.map { item ->
-                    if (item.id == log.maintenanceItemId) recalculateLastService(item, remainingLogs) else item
-                }
                 val updated = data.copy(
-                    maintenanceItems = updatedItems,
-                    maintenanceServiceLogs = remainingLogs,
+                    maintenanceServiceLogs = data.maintenanceServiceLogs.filterNot { it.id == log.id },
                 )
                 if (persistData(updated, "Service log deleted.")) renderVehicleDetail(vehicle.id)
             }
@@ -1222,8 +1294,8 @@ class MainActivity : AppCompatActivity() {
         val raw = input.text.toString().trim()
         if (raw.isBlank()) return OptionalValue(null)
         val value = raw.toIntOrNull()
-        if (value == null || value !in 1886..3000) {
-            showToast("Year must be between 1886 and 3000.")
+        if (value == null || value < 1886) {
+            showToast("Year must be 1886 or later.")
             return null
         }
         return OptionalValue(value)
@@ -1261,20 +1333,6 @@ class MainActivity : AppCompatActivity() {
     private fun decimalInputType(): Int =
         InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
 
-    private fun recalculateLastService(
-        item: MaintenanceItem,
-        logs: List<MaintenanceServiceLog>,
-    ): MaintenanceItem {
-        val latest = logs
-            .filter { it.maintenanceItemId == item.id }
-            .maxWithOrNull(compareBy<MaintenanceServiceLog> { it.dateTime }.thenBy { it.odometer })
-        return item.copy(
-            lastServiceMileage = latest?.odometer,
-            lastServiceDate = latest?.dateTime?.toLocalDate(),
-            lastServiceCost = latest?.cost,
-        )
-    }
-
     private fun List<Vehicle>.updateVehicleMileage(vehicleId: String, odometer: Double): List<Vehicle> =
         map { vehicle ->
             if (vehicle.id == vehicleId) {
@@ -1289,11 +1347,71 @@ class MainActivity : AppCompatActivity() {
             vehicle.year?.toString(),
             vehicle.make.takeIf { it.isNotBlank() },
             vehicle.model.takeIf { it.isNotBlank() },
-            vehicle.fuelType.displayLabel.takeIf { it.isNotBlank() },
+            vehicle.vehicleType.displayLabel.takeIf { it.isNotBlank() },
         ).joinToString(" ")
 
+    private fun vehicleDetailActions(vehicle: Vehicle): Array<Pair<String, () -> Unit>> =
+        buildList {
+            if (vehicle.vehicleType.usesLiquidFuel) add("Add Fuel" to { showAddFuelEntryDialog(vehicle, EnergyEntryType.FUEL) })
+            if (vehicle.vehicleType.usesBattery) add("Add Charging" to { showAddFuelEntryDialog(vehicle, EnergyEntryType.CHARGING) })
+            add("Add Item" to { showMaintenanceItemDialog(vehicle) })
+            add("Log Service" to { showLogServiceDialog(vehicle) })
+            add("Settings" to { showSettingsDialog() })
+        }.toTypedArray()
+
+    private fun vehicleCardActions(vehicle: Vehicle): Array<Pair<String, () -> Unit>> =
+        buildList {
+            add("Open" to { renderVehicleDetail(vehicle.id) })
+            if (vehicle.vehicleType.usesLiquidFuel) add("Add Fuel" to { showAddFuelEntryDialog(vehicle, EnergyEntryType.FUEL) })
+            if (vehicle.vehicleType.usesBattery) add("Add Charging" to { showAddFuelEntryDialog(vehicle, EnergyEntryType.CHARGING) })
+            add("Log Service" to { showLogServiceDialog(vehicle) })
+            add("Delete" to { confirmDeleteVehicle(vehicle) })
+        }.toTypedArray()
+
+    private fun fuelTypeForVehicleType(vehicleType: VehicleType): FuelType =
+        when (vehicleType) {
+            VehicleType.GASOLINE,
+            VehicleType.HYBRID,
+            VehicleType.PLUG_IN_HYBRID,
+            VehicleType.MOTORCYCLE,
+            -> FuelType.GASOLINE
+            VehicleType.DIESEL -> FuelType.DIESEL
+            VehicleType.EV -> FuelType.ELECTRIC
+            VehicleType.OTHER -> FuelType.OTHER
+        }
+
+    private fun entryCountSummary(summary: VehicleSummary): String =
+        when {
+            summary.vehicle.vehicleType.usesLiquidFuel && summary.vehicle.vehicleType.usesBattery ->
+                "Fuel entries: ${summary.fuelEntryCount}   Charging entries: ${summary.chargingEntryCount}"
+            summary.vehicle.vehicleType.usesBattery -> "Charging entries: ${summary.chargingEntryCount}"
+            else -> "Fuel entries: ${summary.fuelEntryCount}"
+        }
+
+    private fun energyCostTitle(vehicle: Vehicle): String =
+        when {
+            vehicle.vehicleType.usesLiquidFuel && vehicle.vehicleType.usesBattery -> "Energy Cost"
+            vehicle.vehicleType.usesBattery -> "Charging Cost"
+            else -> "Fuel Cost"
+        }
+
+    private fun entryAmountLabel(entryType: EnergyEntryType): String =
+        if (entryType == EnergyEntryType.CHARGING) "Energy added" else "Fuel amount"
+
+    private fun fullEntryText(entry: FuelEntry): String =
+        when (entry.entryType) {
+            EnergyEntryType.CHARGING -> if (entry.isFullTank) "Full charge" else "Partial charge"
+            EnergyEntryType.FUEL -> if (entry.isFullTank) "Full tank" else "Partial fill"
+        }
+
     private fun formatRecommendation(state: MaintenanceItemState?): String =
-        state?.let { "${it.item.name} (${it.status.displayLabel})" } ?: "--"
+        state?.let {
+            if (it.status == MaintenanceStatus.UNKNOWN) {
+                "Enter baseline for ${it.item.name}"
+            } else {
+                "${it.item.name} (${it.status.displayLabel})"
+            }
+        } ?: "--"
 
     private fun formatInterval(vehicle: Vehicle, item: MaintenanceItem): String {
         val mileage = item.intervalMiles?.let { "${formatDistance(vehicle, it)} interval" }
@@ -1301,14 +1419,35 @@ class MainActivity : AppCompatActivity() {
         return listOfNotNull(mileage, days).joinToString(" / ").ifBlank { "No interval set" }
     }
 
-    private fun formatLastService(vehicle: Vehicle, item: MaintenanceItem): String {
-        val mileage = item.lastServiceMileage?.let { formatDistance(vehicle, it) }
-        val date = item.lastServiceDate?.format(dateFormatter)
-        val cost = item.lastServiceCost?.let { currencyFormatter.format(it) }
-        return "Last service: ${listOfNotNull(mileage, date, cost).joinToString("   ").ifBlank { "--" }}"
+    private fun formatTirePsiReminder(vehicle: Vehicle): String {
+        val front = vehicle.recommendedFrontTirePsi?.let { formatNumber(it, 1) } ?: "--"
+        val rear = vehicle.recommendedRearTirePsi?.let { formatNumber(it, 1) } ?: "--"
+        return "Tire recommended PSI: front $front | rear $rear"
     }
 
+    private fun formatLastService(vehicle: Vehicle, state: MaintenanceItemState): String {
+        val log = state.lastServiceLog ?: return "No maintenance logs, please record last maintenance"
+        val mileage = formatDistance(vehicle, log.odometer)
+        val date = log.dateTime.toLocalDate().format(dateFormatter)
+        val cost = currencyFormatter.format(log.cost)
+        return "Last service: $mileage   $date   $cost"
+    }
+
+    private fun MaintenanceTemplateDefinition.toMaintenanceItem(vehicleId: String): MaintenanceItem =
+        MaintenanceItem(
+            id = UUID.randomUUID().toString(),
+            vehicleId = vehicleId,
+            categoryId = categoryId,
+            name = name,
+            intervalMiles = intervalMiles,
+            intervalTimeDays = intervalTimeDays,
+            importance = importance,
+        )
+
     private fun formatNextDue(vehicle: Vehicle, state: MaintenanceItemState): String {
+        if (state.status == MaintenanceStatus.UNKNOWN) {
+            return "Needs baseline: log the last known service before due status can be calculated"
+        }
         val mileage = state.nextDueMileage?.let { "at ${formatDistance(vehicle, it)}" }
         val date = state.nextDueDate?.let { "by ${it.format(dateFormatter)}" }
         val remaining = listOfNotNull(
@@ -1331,6 +1470,43 @@ class MainActivity : AppCompatActivity() {
 
     private fun formatCurrencyPerDistance(value: Double?): String =
         value?.let { currencyFormatter.format(it) } ?: "--"
+
+    private fun formatDistanceAgnostic(value: Double?): String =
+        value?.let { formatNumber(it, 1) } ?: "--"
+
+    private fun chartPrimarySummary(unitLabel: String, points: List<ChartPoint>): String {
+        val value = points.lastOrNull()?.value ?: return "No data yet"
+        return if (unitLabel.equals("USD", ignoreCase = true)) {
+            currencyFormatter.format(value)
+        } else {
+            "${formatNumber(value, if (value >= 100.0) 0 else 1)} $unitLabel".trim()
+        }
+    }
+
+    private fun chartSecondarySummary(title: String, unitLabel: String, points: List<ChartPoint>): String {
+        if (points.isEmpty()) return "No recorded points yet"
+        if (points.size == 1) {
+            return when {
+                title.contains("Maintenance", ignoreCase = true) -> "1 service entry"
+                title.contains("Efficiency", ignoreCase = true) -> "1 recorded interval"
+                else -> "1 recorded point"
+            }
+        }
+
+        val delta = points.last().value - points.first().value
+        val countSummary = when {
+            title.contains("Fuel", ignoreCase = true) || title.contains("Charging", ignoreCase = true) || title.contains("Total Cost", ignoreCase = true) ->
+                "${points.size} logged updates"
+            title.contains("Maintenance", ignoreCase = true) -> "${points.size} service entries"
+            else -> "${points.size} plotted points"
+        }
+        val deltaSummary = if (unitLabel.equals("USD", ignoreCase = true)) {
+            "${if (delta >= 0) "+" else "-"}${currencyFormatter.format(kotlin.math.abs(delta))} since first entry"
+        } else {
+            "${if (delta >= 0) "+" else "-"}${formatNumber(kotlin.math.abs(delta), 1)} $unitLabel since first entry"
+        }
+        return "$countSummary   $deltaSummary"
+    }
 
     private fun formatNumber(value: Double, decimals: Int): String =
         "%.${decimals}f".format(Locale.US, value)

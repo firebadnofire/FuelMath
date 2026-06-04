@@ -59,13 +59,13 @@ jobs:
           fi
 
       - name: Check out repository
-        uses: https://github.com/actions/checkout@v4
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
 
       - name: Set up Java
-        uses: https://github.com/actions/setup-java@v4
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
@@ -80,6 +80,9 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          GH_KEY: ${{ secrets.GH_KEY }}
+          GITHUB_RELEASE_OWNER: ${{ vars.GITHUB_RELEASE_OWNER }}
+          GITHUB_RELEASE_REPO: ${{ vars.GITHUB_RELEASE_REPO }}
         run: |
           set -euo pipefail
 
@@ -90,7 +93,16 @@ jobs:
             fi
           done
 
-          for tool in base64 curl find git jq; do
+          if [ -n "${GITHUB_RELEASE_OWNER:-}" ] || [ -n "${GITHUB_RELEASE_REPO:-}" ] || [ -n "${GH_KEY:-}" ]; then
+            for name in GH_KEY GITHUB_RELEASE_OWNER GITHUB_RELEASE_REPO; do
+              if [ -z "${!name:-}" ]; then
+                echo "GitHub release publishing is enabled only when GH_KEY, GITHUB_RELEASE_OWNER, and GITHUB_RELEASE_REPO are all set." >&2
+                exit 1
+              fi
+            done
+          fi
+
+          for tool in base64 curl git jq; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "Missing required tool: ${tool}" >&2
               exit 1
@@ -110,67 +122,37 @@ jobs:
 
       - name: Build release APK
         shell: bash
-        run: |
-          set -euo pipefail
-          chmod +x ./gradlew
-          ./gradlew --no-daemon assembleRelease
-
-      - name: Sign release APK
-        shell: bash
         env:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: |
           set -euo pipefail
+          temp_dir="${RUNNER_TEMP:-${RUNNER_TMP:-/tmp}}"
+          export RELEASE_KEYSTORE_PATH="${temp_dir}/fuelmath-release.keystore"
+          if [ ! -f "$RELEASE_KEYSTORE_PATH" ]; then
+            echo "Release keystore was not decoded at $RELEASE_KEYSTORE_PATH" >&2
+            exit 1
+          fi
+          chmod +x ./gradlew
+          ./gradlew --no-daemon assembleRelease
+
+      - name: Prepare release asset
+        shell: bash
+        run: |
+          set -euo pipefail
 
           tag="${FORGEJO_REF_NAME:-${GITHUB_REF_NAME:?Missing tag ref name}}"
-          temp_dir="${RUNNER_TEMP:-${RUNNER_TMP:-/tmp}}"
-          keystore_path="${temp_dir}/fuelmath-release.keystore"
-
-          if [ ! -f "$keystore_path" ]; then
-            echo "Release keystore was not decoded at $keystore_path" >&2
-            exit 1
-          fi
-
-          android_home="${ANDROID_HOME:-${ANDROID_SDK_ROOT:?Missing Android SDK path}}"
-          build_tools_dir="$(find "$android_home/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
-          if [ -z "$build_tools_dir" ]; then
-            echo "No Android SDK build-tools directory was found under $android_home/build-tools" >&2
-            exit 1
-          fi
-
-          zipalign="${build_tools_dir}/zipalign"
-          apksigner="${build_tools_dir}/apksigner"
-          for tool in "$zipalign" "$apksigner"; do
-            if [ ! -x "$tool" ]; then
-              echo "Missing required Android SDK tool: $tool" >&2
-              exit 1
-            fi
-          done
-
           shopt -s nullglob
-          apk_files=(app/build/outputs/apk/release/*-release-unsigned.apk)
+          apk_files=(app/build/outputs/apk/release/*.apk)
 
           if [ "${#apk_files[@]}" -ne 1 ]; then
-            echo "Expected exactly one unsigned release APK, found ${#apk_files[@]}." >&2
+            echo "Expected exactly one release APK, found ${#apk_files[@]}." >&2
             exit 1
           fi
 
           mkdir -p dist
-          aligned_apk="dist/fuelmath-${tag}-aligned.apk"
-          signed_apk="dist/fuelmath-${tag}.apk"
-
-          "$zipalign" -p -f 4 "${apk_files[0]}" "$aligned_apk"
-          "$apksigner" sign \
-            --ks "$keystore_path" \
-            --ks-key-alias "$KEY_ALIAS" \
-            --ks-pass env:KEYSTORE_PASSWORD \
-            --key-pass env:KEY_PASSWORD \
-            --out "$signed_apk" \
-            "$aligned_apk"
-          "$apksigner" verify --verbose "$signed_apk"
-          rm -f "$aligned_apk"
+          cp "${apk_files[0]}" "dist/fuelmath-${tag}.apk"
 
       - name: Publish Forgejo release
         shell: bash
@@ -251,3 +233,106 @@ jobs:
 
           api_request POST "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets?name=${asset_name_encoded}" \
             --form "attachment=@${asset_path}" >/dev/null
+
+      - name: Publish GitHub release
+        shell: bash
+        env:
+          GH_KEY: ${{ secrets.GH_KEY }}
+          GITHUB_RELEASE_OWNER: ${{ vars.GITHUB_RELEASE_OWNER }}
+          GITHUB_RELEASE_REPO: ${{ vars.GITHUB_RELEASE_REPO }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_KEY:-}" ] || [ -z "${GITHUB_RELEASE_OWNER:-}" ] || [ -z "${GITHUB_RELEASE_REPO:-}" ]; then
+            echo "Skipping GitHub release publish because GH_KEY, GITHUB_RELEASE_OWNER, or GITHUB_RELEASE_REPO is not configured."
+            exit 0
+          fi
+
+          api_url="https://api.github.com"
+          upload_url="https://uploads.github.com"
+          owner="${GITHUB_RELEASE_OWNER}"
+          repo="${GITHUB_RELEASE_REPO}"
+          tag="${FORGEJO_REF_NAME:-${GITHUB_REF_NAME:?Missing tag ref name}}"
+          token="${GH_KEY:?Missing GitHub token}"
+          asset_path="dist/fuelmath-${tag}.apk"
+          asset_name="$(basename "$asset_path")"
+          asset_name_encoded="$(jq -nr --arg value "$asset_name" '$value|@uri')"
+          release_name="Fuel Math ${tag}"
+          release_body="Automated Fuel Math APK release for ${tag}."
+
+          github_request() {
+            local method="$1"
+            local url="$2"
+            local response_file
+            local status
+            shift 2
+            response_file="$(mktemp)"
+            status="$(curl --silent --show-error \
+              --output "$response_file" \
+              --write-out "%{http_code}" \
+              --request "$method" \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer ${token}" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "$@" \
+              "$url")"
+            if [ "$status" -lt 200 ] || [ "$status" -gt 299 ]; then
+              cat "$response_file" >&2
+              echo "GitHub API request failed: ${method} ${url} returned HTTP ${status}" >&2
+              exit 1
+            fi
+            cat "$response_file"
+          }
+
+          release_response="$(mktemp)"
+          release_status="$(curl --silent --show-error \
+            --output "$release_response" \
+            --write-out "%{http_code}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${token}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "${api_url}/repos/${owner}/${repo}/releases/tags/${tag}")"
+
+          if [ "$release_status" = "404" ]; then
+            release_payload="$(jq -n \
+              --arg tag "$tag" \
+              --arg name "$release_name" \
+              --arg body "$release_body" \
+              '{tag_name: $tag, name: $name, body: $body, draft: false, prerelease: false, make_latest: "true"}')"
+            release_json="$(github_request POST "${api_url}/repos/${owner}/${repo}/releases" \
+              --header "Content-Type: application/json" \
+              --data "$release_payload")"
+          elif [ "$release_status" = "200" ]; then
+            release_json="$(cat "$release_response")"
+            release_id="$(printf '%s' "$release_json" | jq -r '.id')"
+            release_payload="$(jq -n \
+              --arg tag "$tag" \
+              --arg name "$release_name" \
+              --arg body "$release_body" \
+              '{tag_name: $tag, name: $name, body: $body, draft: false, prerelease: false, make_latest: "true"}')"
+            release_json="$(github_request PATCH "${api_url}/repos/${owner}/${repo}/releases/${release_id}" \
+              --header "Content-Type: application/json" \
+              --data "$release_payload")"
+          else
+            cat "$release_response" >&2
+            echo "Failed to look up GitHub release for ${tag}: HTTP ${release_status}" >&2
+            exit 1
+          fi
+
+          release_id="$(printf '%s' "$release_json" | jq -r '.id')"
+          if [ -z "$release_id" ] || [ "$release_id" = "null" ]; then
+            echo "GitHub release response did not include an id." >&2
+            exit 1
+          fi
+
+          existing_asset_id="$(github_request GET "${api_url}/repos/${owner}/${repo}/releases/${release_id}/assets" \
+            | jq -r --arg name "$asset_name" '.[] | select(.name == $name) | .id' \
+            | head -n 1)"
+
+          if [ -n "$existing_asset_id" ]; then
+            github_request DELETE "${api_url}/repos/${owner}/${repo}/releases/assets/${existing_asset_id}" >/dev/null
+          fi
+
+          github_request POST "${upload_url}/repos/${owner}/${repo}/releases/${release_id}/assets?name=${asset_name_encoded}" \
+            --header "Content-Type: application/vnd.android.package-archive" \
+            --data-binary "@${asset_path}" >/dev/null

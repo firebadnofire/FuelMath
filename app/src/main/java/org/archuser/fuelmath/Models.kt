@@ -3,7 +3,7 @@ package org.archuser.fuelmath
 import java.time.LocalDate
 import java.time.LocalDateTime
 
-const val CURRENT_SCHEMA_VERSION = 2
+const val CURRENT_SCHEMA_VERSION = 5
 
 enum class DistanceUnit(val storageValue: String, val displayLabel: String) {
     MILES("mi", "mi"),
@@ -27,6 +27,15 @@ enum class VolumeUnit(val storageValue: String, val displayLabel: String) {
     }
 }
 
+enum class EnergyUnit(val storageValue: String, val displayLabel: String) {
+    KILOWATT_HOURS("kwh", "kWh");
+
+    companion object {
+        fun fromStorage(value: String): EnergyUnit =
+            entries.firstOrNull { it.storageValue == value } ?: KILOWATT_HOURS
+    }
+}
+
 enum class FuelType(val storageValue: String, val displayLabel: String) {
     GASOLINE("gasoline", "Gasoline"),
     DIESEL("diesel", "Diesel"),
@@ -40,27 +49,73 @@ enum class FuelType(val storageValue: String, val displayLabel: String) {
     }
 }
 
+enum class VehicleType(
+    val storageValue: String,
+    val displayLabel: String,
+    val usesLiquidFuel: Boolean,
+    val usesBattery: Boolean,
+) {
+    GASOLINE("gasoline", "Gasoline", usesLiquidFuel = true, usesBattery = false),
+    DIESEL("diesel", "Diesel", usesLiquidFuel = true, usesBattery = false),
+    HYBRID("hybrid", "Hybrid", usesLiquidFuel = true, usesBattery = false),
+    PLUG_IN_HYBRID("plug_in_hybrid", "Plug-in Hybrid", usesLiquidFuel = true, usesBattery = true),
+    EV("ev", "EV", usesLiquidFuel = false, usesBattery = true),
+    MOTORCYCLE("motorcycle", "Motorcycle", usesLiquidFuel = true, usesBattery = false),
+    OTHER("other", "Other", usesLiquidFuel = false, usesBattery = false);
+
+    companion object {
+        fun fromStorage(value: String): VehicleType =
+            entries.firstOrNull { it.storageValue == value }
+                ?: when (value) {
+                    FuelType.ELECTRIC.storageValue -> EV
+                    else -> OTHER
+                }
+
+        fun fromFuelType(value: FuelType): VehicleType =
+            when (value) {
+                FuelType.GASOLINE -> GASOLINE
+                FuelType.DIESEL -> DIESEL
+                FuelType.HYBRID -> HYBRID
+                FuelType.ELECTRIC -> EV
+                FuelType.OTHER -> OTHER
+            }
+    }
+}
+
 enum class MaintenanceImportance(
     val storageValue: String,
     val displayLabel: String,
     val scoreWeight: Double,
 ) {
     LOW("low", "Low", 1.0),
-    NORMAL("normal", "Normal", 2.0),
+    MEDIUM("medium", "Medium", 2.0),
     HIGH("high", "High", 3.0),
-    CRITICAL("critical", "Critical", 4.0);
+    CRITICAL("critical", "Critical", 5.0);
 
     companion object {
         fun fromStorage(value: String): MaintenanceImportance =
-            entries.firstOrNull { it.storageValue == value }
-                ?: throw IllegalArgumentException("Unknown maintenance importance: $value")
+            when (value) {
+                "normal" -> MEDIUM
+                else -> entries.firstOrNull { it.storageValue == value }
+            } ?: throw IllegalArgumentException("Unknown maintenance importance: $value")
     }
 }
 
 enum class MaintenanceStatus(val displayLabel: String) {
+    UNKNOWN("Unknown"),
     GOOD("Good"),
     DUE_SOON("Due Soon"),
     OVERDUE("Overdue"),
+}
+
+enum class EnergyEntryType(val storageValue: String) {
+    FUEL("fuel"),
+    CHARGING("charging");
+
+    companion object {
+        fun fromStorage(value: String): EnergyEntryType =
+            entries.firstOrNull { it.storageValue == value } ?: FUEL
+    }
 }
 
 data class Vehicle(
@@ -71,9 +126,14 @@ data class Vehicle(
     val year: Int? = null,
     val currentMileage: Double = 0.0,
     val fuelType: FuelType = FuelType.GASOLINE,
+    val vehicleType: VehicleType = VehicleType.fromFuelType(fuelType),
     val tankCapacity: Double,
+    val batteryCapacity: Double? = null,
+    val recommendedFrontTirePsi: Double? = null,
+    val recommendedRearTirePsi: Double? = null,
     val distanceUnit: DistanceUnit,
     val volumeUnit: VolumeUnit,
+    val energyUnit: EnergyUnit = EnergyUnit.KILOWATT_HOURS,
 )
 
 data class MaintenanceCategory(
@@ -88,11 +148,8 @@ data class MaintenanceItem(
     val name: String,
     val intervalMiles: Double? = null,
     val intervalTimeDays: Int? = null,
-    val lastServiceMileage: Double? = null,
-    val lastServiceDate: LocalDate? = null,
-    val lastServiceCost: Double? = null,
     val notes: String = "",
-    val importance: MaintenanceImportance = MaintenanceImportance.NORMAL,
+    val importance: MaintenanceImportance = MaintenanceImportance.MEDIUM,
 )
 
 data class MaintenanceServiceLog(
@@ -113,6 +170,7 @@ data class FuelEntry(
     val fuelAmount: Double,
     val pricePerUnit: Double,
     val isFullTank: Boolean,
+    val entryType: EnergyEntryType = EnergyEntryType.FUEL,
 ) {
     val totalCost: Double
         get() = fuelAmount * pricePerUnit
@@ -174,6 +232,7 @@ data class SeasonalEfficiencyComparison(
 data class VehicleSummary(
     val vehicle: Vehicle,
     val totalFuelCost: Double,
+    val totalChargingCost: Double,
     val totalMaintenanceCost: Double,
     val totalCost: Double,
     val totalDistance: Double?,
@@ -186,8 +245,10 @@ data class VehicleSummary(
     val healthScore: Int,
     val overdueCount: Int,
     val dueSoonCount: Int,
+    val unknownCount: Int,
     val smartRecommendation: MaintenanceItemState?,
     val fuelEntryCount: Int,
+    val chargingEntryCount: Int,
     val maintenanceItemCount: Int,
     val maintenanceServiceLogCount: Int,
 )
@@ -197,6 +258,14 @@ data class MaintenanceReminderSnapshot(
     val message: String,
     val overdueCount: Int,
     val dueSoonCount: Int,
+)
+
+data class MaintenanceTemplateDefinition(
+    val name: String,
+    val categoryId: String,
+    val intervalMiles: Double? = null,
+    val intervalTimeDays: Int? = null,
+    val importance: MaintenanceImportance = MaintenanceImportance.MEDIUM,
 )
 
 object MaintenanceDefaults {
@@ -212,6 +281,32 @@ object MaintenanceDefaults {
         MaintenanceCategory(CATEGORY_WEAR_ITEMS, "Wear Items"),
         MaintenanceCategory(CATEGORY_ELECTRICAL, "Electrical"),
         MaintenanceCategory(CATEGORY_CRITICAL, "Critical"),
+    )
+
+    private val liquidFuelTemplates: List<MaintenanceTemplateDefinition> = listOf(
+        MaintenanceTemplateDefinition("Oil Change", CATEGORY_ENGINE, intervalMiles = 5_000.0, intervalTimeDays = 180, importance = MaintenanceImportance.HIGH),
+        MaintenanceTemplateDefinition("Engine Air Filter", CATEGORY_ENGINE, intervalMiles = 15_000.0, intervalTimeDays = 365),
+        MaintenanceTemplateDefinition("Spark Plugs", CATEGORY_ENGINE, intervalMiles = 60_000.0, importance = MaintenanceImportance.MEDIUM),
+        MaintenanceTemplateDefinition("Transmission Fluid", CATEGORY_FLUIDS, intervalMiles = 60_000.0, intervalTimeDays = 1_095, importance = MaintenanceImportance.HIGH),
+        MaintenanceTemplateDefinition("Coolant", CATEGORY_FLUIDS, intervalMiles = 50_000.0, intervalTimeDays = 730, importance = MaintenanceImportance.MEDIUM),
+        MaintenanceTemplateDefinition("Brake Fluid", CATEGORY_FLUIDS, intervalTimeDays = 730, importance = MaintenanceImportance.HIGH),
+        MaintenanceTemplateDefinition("Tires", CATEGORY_WEAR_ITEMS, intervalMiles = 6_000.0, intervalTimeDays = 180, importance = MaintenanceImportance.HIGH),
+        MaintenanceTemplateDefinition("Brake Pads", CATEGORY_WEAR_ITEMS, intervalMiles = 25_000.0, importance = MaintenanceImportance.HIGH),
+        MaintenanceTemplateDefinition("Wiper Blades", CATEGORY_WEAR_ITEMS, intervalTimeDays = 365, importance = MaintenanceImportance.LOW),
+        MaintenanceTemplateDefinition("12V Battery", CATEGORY_ELECTRICAL, intervalTimeDays = 1_460, importance = MaintenanceImportance.MEDIUM),
+    )
+
+    private val evTemplates: List<MaintenanceTemplateDefinition> = listOf(
+        MaintenanceTemplateDefinition("Battery Health Inspection", CATEGORY_ELECTRICAL, intervalMiles = 15_000.0, intervalTimeDays = 365, importance = MaintenanceImportance.HIGH),
+        MaintenanceTemplateDefinition("Charge Port Inspection", CATEGORY_ELECTRICAL, intervalMiles = 12_000.0, intervalTimeDays = 365, importance = MaintenanceImportance.MEDIUM),
+        MaintenanceTemplateDefinition("Charging Cable Inspection", CATEGORY_ELECTRICAL, intervalTimeDays = 365, importance = MaintenanceImportance.MEDIUM),
+        MaintenanceTemplateDefinition("Cabin Air Filter", CATEGORY_ENGINE, intervalMiles = 15_000.0, intervalTimeDays = 365, importance = MaintenanceImportance.MEDIUM),
+        MaintenanceTemplateDefinition("Brake Fluid", CATEGORY_FLUIDS, intervalTimeDays = 730, importance = MaintenanceImportance.HIGH),
+        MaintenanceTemplateDefinition("Coolant", CATEGORY_FLUIDS, intervalMiles = 100_000.0, intervalTimeDays = 1_825, importance = MaintenanceImportance.MEDIUM),
+        MaintenanceTemplateDefinition("Tires", CATEGORY_WEAR_ITEMS, intervalMiles = 6_000.0, intervalTimeDays = 180, importance = MaintenanceImportance.HIGH),
+        MaintenanceTemplateDefinition("Brake Pads", CATEGORY_WEAR_ITEMS, intervalMiles = 35_000.0, importance = MaintenanceImportance.MEDIUM),
+        MaintenanceTemplateDefinition("Wiper Blades", CATEGORY_WEAR_ITEMS, intervalTimeDays = 365, importance = MaintenanceImportance.LOW),
+        MaintenanceTemplateDefinition("12V Battery", CATEGORY_ELECTRICAL, intervalTimeDays = 1_460, importance = MaintenanceImportance.MEDIUM),
     )
 
     fun categoryIdForLegacyType(type: String): String {
@@ -231,7 +326,40 @@ object MaintenanceDefaults {
             "timing" in normalized -> MaintenanceImportance.CRITICAL
             "brake" in normalized || "oil" in normalized || "water pump" in normalized -> MaintenanceImportance.HIGH
             "wiper" in normalized -> MaintenanceImportance.LOW
-            else -> MaintenanceImportance.NORMAL
+            else -> MaintenanceImportance.MEDIUM
         }
     }
+
+    fun templatesForVehicleType(vehicleType: VehicleType): List<MaintenanceTemplateDefinition> =
+        when (vehicleType) {
+            VehicleType.GASOLINE -> liquidFuelTemplates
+            VehicleType.DIESEL -> liquidFuelTemplates + listOf(
+                MaintenanceTemplateDefinition("Fuel Filter", CATEGORY_ENGINE, intervalMiles = 20_000.0, intervalTimeDays = 365, importance = MaintenanceImportance.MEDIUM),
+            )
+            VehicleType.HYBRID -> liquidFuelTemplates + listOf(
+                MaintenanceTemplateDefinition("Hybrid System Inspection", CATEGORY_ELECTRICAL, intervalMiles = 20_000.0, intervalTimeDays = 365, importance = MaintenanceImportance.HIGH),
+                MaintenanceTemplateDefinition("Regenerative Brake Inspection", CATEGORY_WEAR_ITEMS, intervalMiles = 20_000.0, intervalTimeDays = 365, importance = MaintenanceImportance.MEDIUM),
+            )
+            VehicleType.PLUG_IN_HYBRID -> liquidFuelTemplates + listOf(
+                MaintenanceTemplateDefinition("Hybrid System Inspection", CATEGORY_ELECTRICAL, intervalMiles = 20_000.0, intervalTimeDays = 365, importance = MaintenanceImportance.HIGH),
+                MaintenanceTemplateDefinition("Charge Port Inspection", CATEGORY_ELECTRICAL, intervalMiles = 12_000.0, intervalTimeDays = 365, importance = MaintenanceImportance.MEDIUM),
+                MaintenanceTemplateDefinition("Charging Cable Inspection", CATEGORY_ELECTRICAL, intervalTimeDays = 365, importance = MaintenanceImportance.MEDIUM),
+            )
+            VehicleType.EV -> evTemplates
+            VehicleType.MOTORCYCLE -> listOf(
+                MaintenanceTemplateDefinition("Oil Change", CATEGORY_ENGINE, intervalMiles = 4_000.0, intervalTimeDays = 180, importance = MaintenanceImportance.HIGH),
+                MaintenanceTemplateDefinition("Chain Service", CATEGORY_CRITICAL, intervalMiles = 600.0, intervalTimeDays = 90, importance = MaintenanceImportance.HIGH),
+                MaintenanceTemplateDefinition("Brake Fluid", CATEGORY_FLUIDS, intervalTimeDays = 730, importance = MaintenanceImportance.HIGH),
+                MaintenanceTemplateDefinition("Tires", CATEGORY_WEAR_ITEMS, intervalMiles = 4_000.0, intervalTimeDays = 180, importance = MaintenanceImportance.HIGH),
+                MaintenanceTemplateDefinition("Brake Pads", CATEGORY_WEAR_ITEMS, intervalMiles = 12_000.0, importance = MaintenanceImportance.HIGH),
+                MaintenanceTemplateDefinition("Coolant", CATEGORY_FLUIDS, intervalMiles = 24_000.0, intervalTimeDays = 730, importance = MaintenanceImportance.MEDIUM),
+                MaintenanceTemplateDefinition("12V Battery", CATEGORY_ELECTRICAL, intervalTimeDays = 1_460, importance = MaintenanceImportance.MEDIUM),
+            )
+            VehicleType.OTHER -> listOf(
+                MaintenanceTemplateDefinition("Brake Fluid", CATEGORY_FLUIDS, intervalTimeDays = 730, importance = MaintenanceImportance.HIGH),
+                MaintenanceTemplateDefinition("Tires", CATEGORY_WEAR_ITEMS, intervalMiles = 6_000.0, intervalTimeDays = 180, importance = MaintenanceImportance.HIGH),
+                MaintenanceTemplateDefinition("Wiper Blades", CATEGORY_WEAR_ITEMS, intervalTimeDays = 365, importance = MaintenanceImportance.LOW),
+                MaintenanceTemplateDefinition("12V Battery", CATEGORY_ELECTRICAL, intervalTimeDays = 1_460, importance = MaintenanceImportance.MEDIUM),
+            )
+        }
 }
