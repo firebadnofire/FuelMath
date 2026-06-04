@@ -120,12 +120,12 @@ Optional GitHub mirroring also uses:
 
 | Setting | Purpose |
 | --- | --- |
-| `GH_KEY` | GitHub access token used to publish to the configured GitHub mirror. |
-| `GITHUB_RELEASE_OWNER` | GitHub owner or organization for the mirror repository. |
-| `GITHUB_RELEASE_REPO` | GitHub repository name for the mirror repository. |
+| `GH_KEY` | GitHub access token used to publish to the default mirror `firebadnofire/FuelMath`, or to the configured override mirror. |
+| `GITHUB_RELEASE_OWNER` | Optional GitHub owner or organization override for the mirror repository. |
+| `GITHUB_RELEASE_REPO` | Optional GitHub repository name override for the mirror repository. |
 
 `GH_KEY` should have enough permission to create and edit releases and upload
-release assets for the configured GitHub repository. For a fine-grained GitHub
+release assets for `firebadnofire/FuelMath` by default, or for the configured override repository. For a fine-grained GitHub
 token, use repository `Contents: Read and write`.
 
 Secret scope matters. `GH_KEY` must be available to this repository's workflows.
@@ -215,11 +215,12 @@ eligible for latest.
 ## GitHub Release Publishing
 
 `Publish GitHub release` uses `GH_KEY` and GitHub's REST API directly when
-`GH_KEY`, `GITHUB_RELEASE_OWNER`, and `GITHUB_RELEASE_REPO` are all set. It does
-not run GitHub Actions.
+`GH_KEY` is set. By default it publishes to `firebadnofire/FuelMath`. Set
+`GITHUB_RELEASE_OWNER` and `GITHUB_RELEASE_REPO` only when the mirror target
+should be different. It does not run GitHub Actions.
 
-If any of those values are missing, the workflow prints a skip message and leaves
-GitHub publishing disabled.
+If `GH_KEY` is missing, the workflow prints a skip message and leaves GitHub
+publishing disabled.
 
 The step:
 
@@ -273,7 +274,7 @@ Keep the filename deterministic so reruns can replace the previous asset.
 
 ### Publish only to Forgejo
 
-Leave `GH_KEY`, `GITHUB_RELEASE_OWNER`, and `GITHUB_RELEASE_REPO` unset.
+Leave `GH_KEY` unset.
 
 ### Publish only to GitHub
 

@@ -86,6 +86,9 @@ jobs:
         run: |
           set -euo pipefail
 
+          default_github_release_owner="firebadnofire"
+          default_github_release_repo="FuelMath"
+
           for name in KEY_ALIAS KEY_PASSWORD KEYSTORE_BASE64 KEYSTORE_PASSWORD; do
             if [ -z "${!name:-}" ]; then
               echo "Missing required secret: ${name}" >&2
@@ -93,13 +96,23 @@ jobs:
             fi
           done
 
-          if [ -n "${GITHUB_RELEASE_OWNER:-}" ] || [ -n "${GITHUB_RELEASE_REPO:-}" ] || [ -n "${GH_KEY:-}" ]; then
-            for name in GH_KEY GITHUB_RELEASE_OWNER GITHUB_RELEASE_REPO; do
-              if [ -z "${!name:-}" ]; then
-                echo "GitHub release publishing is enabled only when GH_KEY, GITHUB_RELEASE_OWNER, and GITHUB_RELEASE_REPO are all set." >&2
-                exit 1
-              fi
-            done
+          if [ -n "${GITHUB_RELEASE_OWNER:-}" ] && [ -z "${GITHUB_RELEASE_REPO:-}" ]; then
+            echo "GITHUB_RELEASE_REPO must be set when GITHUB_RELEASE_OWNER overrides the default GitHub target." >&2
+            exit 1
+          fi
+
+          if [ -n "${GITHUB_RELEASE_REPO:-}" ] && [ -z "${GITHUB_RELEASE_OWNER:-}" ]; then
+            echo "GITHUB_RELEASE_OWNER must be set when GITHUB_RELEASE_REPO overrides the default GitHub target." >&2
+            exit 1
+          fi
+
+          if [ -n "${GH_KEY:-}" ]; then
+            github_owner="${GITHUB_RELEASE_OWNER:-$default_github_release_owner}"
+            github_repo="${GITHUB_RELEASE_REPO:-$default_github_release_repo}"
+            echo "GitHub release publishing enabled for ${github_owner}/${github_repo}."
+          elif [ -n "${GITHUB_RELEASE_OWNER:-}" ] || [ -n "${GITHUB_RELEASE_REPO:-}" ]; then
+            echo "GH_KEY must be set when configuring GitHub release publishing." >&2
+            exit 1
           fi
 
           for tool in base64 curl git jq; do
@@ -243,15 +256,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "${GH_KEY:-}" ] || [ -z "${GITHUB_RELEASE_OWNER:-}" ] || [ -z "${GITHUB_RELEASE_REPO:-}" ]; then
-            echo "Skipping GitHub release publish because GH_KEY, GITHUB_RELEASE_OWNER, or GITHUB_RELEASE_REPO is not configured."
+          if [ -z "${GH_KEY:-}" ]; then
+            echo "Skipping GitHub release publish because GH_KEY is not configured."
             exit 0
           fi
 
           api_url="https://api.github.com"
           upload_url="https://uploads.github.com"
-          owner="${GITHUB_RELEASE_OWNER}"
-          repo="${GITHUB_RELEASE_REPO}"
+          owner="${GITHUB_RELEASE_OWNER:-firebadnofire}"
+          repo="${GITHUB_RELEASE_REPO:-FuelMath}"
           tag="${FORGEJO_REF_NAME:-${GITHUB_REF_NAME:?Missing tag ref name}}"
           token="${GH_KEY:?Missing GitHub token}"
           asset_path="dist/fuelmath-${tag}.apk"

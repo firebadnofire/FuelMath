@@ -26,8 +26,14 @@ asset_path="dist/fuelmath-${tag}.apk"
 release_name="Fuel Math ${tag}"
 ```
 
-If Fuel Math ever publishes to GitHub, set repository variables instead of
-hard-coding a second host target into the workflow:
+Fuel Math's default GitHub mirror target is:
+
+```text
+firebadnofire/FuelMath
+```
+
+Set repository variables only if the GitHub mirror should publish somewhere
+else:
 
 ```text
 GITHUB_RELEASE_OWNER
@@ -111,12 +117,18 @@ Optional GitHub mirroring needs:
 
 ```text
 GH_KEY
+```
+
+Optional override variables:
+
+```text
 GITHUB_RELEASE_OWNER
 GITHUB_RELEASE_REPO
 ```
 
 `GH_KEY` must be able to create and edit releases and upload release assets in
-the configured GitHub target repository. A fine-grained GitHub token should have
+the default GitHub target `firebadnofire/FuelMath`, or in the configured
+override repository if those variables are set. A fine-grained GitHub token should have
 repository `Contents: Read and write`.
 
 Generate `KEYSTORE_BASE64` from the keystore file with:
@@ -150,6 +162,6 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-If optional GitHub release publishing fails with a 404, check the
-`GITHUB_RELEASE_OWNER` and `GITHUB_RELEASE_REPO` values first, then verify that
-`GH_KEY` has access to that repository.
+If optional GitHub release publishing fails with a 404, first confirm whether it
+should be targeting the default mirror `firebadnofire/FuelMath` or an override
+repository, then verify that `GH_KEY` has access to that repository.
