@@ -217,6 +217,157 @@ class FuelCalculatorTest {
     }
 
     @Test
+    fun equipmentCanUseHourOnlyMaintenanceWithoutMileage() {
+        val skidLoader = vehicle.copy(
+            id = "skid-loader-1",
+            name = "Skid Loader",
+            assetCategory = AssetCategory.EQUIPMENT,
+            assetType = AssetType.SKID_LOADER,
+            fuelType = FuelType.DIESEL,
+            vehicleType = VehicleType.DIESEL,
+            currentMileage = 0.0,
+            currentHours = 126.0,
+            tankCapacity = 14.0,
+        )
+        val hydraulicFilter = MaintenanceItem(
+            id = "hydraulic-filter",
+            vehicleId = skidLoader.id,
+            categoryId = MaintenanceDefaults.CATEGORY_HYDRAULICS,
+            name = "Hydraulic Filter",
+            intervalHours = 50.0,
+            importance = MaintenanceImportance.HIGH,
+        )
+        val logs = listOf(
+            MaintenanceServiceLog(
+                id = "hydraulic-filter-log",
+                vehicleId = skidLoader.id,
+                maintenanceItemId = hydraulicFilter.id,
+                dateTime = LocalDateTime.of(2025, 12, 1, 8, 0),
+                odometer = 0.0,
+                hours = 75.0,
+                cost = 42.0,
+            ),
+        )
+
+        val states = FuelCalculator.calculateMaintenanceStates(
+            skidLoader,
+            FuelMathData(
+                vehicles = listOf(skidLoader),
+                maintenanceItems = listOf(hydraulicFilter),
+                maintenanceServiceLogs = logs,
+            ),
+            asOfDate,
+        )
+
+        assertEquals(MaintenanceStatus.OVERDUE, states.single().status)
+        assertEquals(125.0, states.single().nextDueHours ?: -1.0, 0.0001)
+        assertEquals(-1.0, states.single().hoursRemaining ?: 1.0, 0.0001)
+        assertNull(states.single().nextDueMileage)
+    }
+
+    @Test
+    fun archivedAssetsAreHiddenFromReminderSnapshots() {
+        val archivedVehicle = vehicle.copy(archived = true, currentMileage = 20_000.0)
+        val item = maintenanceItem(
+            id = "oil",
+            name = "Oil Change",
+            intervalMiles = 5_000.0,
+        )
+        val log = serviceLog("oil-log", itemId = item.id, odometer = 1_000.0)
+
+        val reminder = FuelCalculator.buildReminderSnapshot(
+            FuelMathData(
+                vehicles = listOf(archivedVehicle),
+                maintenanceItems = listOf(item.copy(vehicleId = archivedVehicle.id)),
+                maintenanceServiceLogs = listOf(log.copy(vehicleId = archivedVehicle.id)),
+            ),
+            asOfDate,
+        )
+
+        assertNull(reminder)
+    }
+
+    @Test
+    fun removeVehicleAndRelatedDataDeletesArchivedAssetRecords() {
+        val archivedVehicle = vehicle.copy(id = "archived-1", name = "Old Truck", archived = true)
+        val archivedItem = MaintenanceItem(
+            id = "archived-item",
+            vehicleId = archivedVehicle.id,
+            categoryId = MaintenanceDefaults.CATEGORY_ENGINE,
+            name = "Oil Change",
+            intervalMiles = 5_000.0,
+        )
+        val original = FuelMathData(
+            vehicles = listOf(vehicle, archivedVehicle),
+            fuelEntries = listOf(
+                fuelEntry("fuel-active", odometer = 12_300.0),
+                FuelEntry(
+                    id = "fuel-archived",
+                    vehicleId = archivedVehicle.id,
+                    dateTime = LocalDateTime.of(2026, 1, 2, 8, 0),
+                    odometer = 80_000.0,
+                    fuelAmount = 10.0,
+                    pricePerUnit = 3.5,
+                    isFullTank = true,
+                ),
+            ),
+            meterLogs = listOf(
+                MeterLog(
+                    id = "meter-archived",
+                    vehicleId = archivedVehicle.id,
+                    dateTime = LocalDateTime.of(2026, 1, 3, 8, 0),
+                    mileage = 80_100.0,
+                    source = MeterLogSource.MANUAL,
+                ),
+            ),
+            maintenanceItems = listOf(maintenanceItem(), archivedItem),
+            maintenanceServiceLogs = listOf(
+                serviceLog("service-active"),
+                MaintenanceServiceLog(
+                    id = "service-archived",
+                    vehicleId = archivedVehicle.id,
+                    maintenanceItemId = archivedItem.id,
+                    dateTime = LocalDateTime.of(2026, 1, 4, 8, 0),
+                    odometer = 80_100.0,
+                    cost = 60.0,
+                ),
+            ),
+        )
+
+        val updated = FuelCalculator.removeVehicleAndRelatedData(original, archivedVehicle.id)
+
+        assertEquals(listOf(vehicle), updated.vehicles)
+        assertTrue(updated.fuelEntries.all { it.vehicleId != archivedVehicle.id })
+        assertTrue(updated.meterLogs.all { it.vehicleId != archivedVehicle.id })
+        assertTrue(updated.maintenanceItems.all { it.vehicleId != archivedVehicle.id })
+        assertTrue(updated.maintenanceServiceLogs.all { it.vehicleId != archivedVehicle.id })
+        assertEquals(1, updated.fuelEntries.size)
+        assertEquals(1, updated.maintenanceItems.size)
+        assertEquals(1, updated.maintenanceServiceLogs.size)
+    }
+
+    @Test
+    fun equipmentTemplatesAreAssetAndFuelAware() {
+        val electricGolfCart = MaintenanceDefaults.templatesForAsset(
+            assetCategory = AssetCategory.EQUIPMENT,
+            assetType = AssetType.GOLF_CART,
+            fuelType = FuelType.ELECTRIC,
+        )
+        val mixedGasChainsaw = MaintenanceDefaults.templatesForAsset(
+            assetCategory = AssetCategory.EQUIPMENT,
+            assetType = AssetType.CHAINSAW,
+            fuelType = FuelType.MIXED_GAS,
+        )
+
+        assertTrue(electricGolfCart.any { it.name == "Charger Inspection" })
+        assertTrue(electricGolfCart.none { it.name == "Engine Oil" })
+        assertTrue(electricGolfCart.none { it.name == "Spark Plug" })
+        assertTrue(mixedGasChainsaw.any { it.name == "Chain Sharpening" })
+        assertTrue(mixedGasChainsaw.any { it.name == "Spark Plug" })
+        assertTrue(mixedGasChainsaw.none { it.name == "Tire Rotation" })
+    }
+
+    @Test
     fun healthScoreAndRecommendationPrioritizeWeightedUrgentItems() {
         val overdueHigh = maintenanceItem(
             id = "brakes",
@@ -307,6 +458,95 @@ class FuelCalculatorTest {
         assertEquals(EnergyEntryType.CHARGING, decoded.fuelEntries.single().entryType)
         assertEquals(41.0, decoded.vehicles.single().recommendedFrontTirePsi ?: -1.0, 0.0001)
         assertEquals(39.0, decoded.vehicles.single().recommendedRearTirePsi ?: -1.0, 0.0001)
+    }
+
+    @Test
+    fun jsonRoundTripPreservesEquipmentHoursAndMeterLogs() {
+        val generator = vehicle.copy(
+            id = "generator-1",
+            name = "Generator",
+            assetCategory = AssetCategory.EQUIPMENT,
+            assetType = AssetType.GENERATOR,
+            fuelType = FuelType.PROPANE,
+            vehicleType = VehicleType.GASOLINE,
+            currentMileage = 0.0,
+            currentHours = 42.5,
+            tankCapacity = 7.0,
+        )
+        val item = MaintenanceItem(
+            id = "load-test",
+            vehicleId = generator.id,
+            categoryId = MaintenanceDefaults.CATEGORY_ELECTRICAL,
+            name = "Load Test",
+            intervalHours = 50.0,
+            intervalTimeDays = 180,
+            importance = MaintenanceImportance.HIGH,
+        )
+        val roundTripData = FuelMathData(
+            vehicles = listOf(generator),
+            fuelEntries = listOf(
+                FuelEntry(
+                    id = "propane-1",
+                    vehicleId = generator.id,
+                    dateTime = LocalDateTime.of(2026, 1, 1, 8, 0),
+                    odometer = 0.0,
+                    hours = 40.0,
+                    fuelAmount = 2.5,
+                    pricePerUnit = 3.25,
+                    isFullTank = true,
+                    station = "Home",
+                ),
+            ),
+            meterLogs = listOf(
+                MeterLog(
+                    id = "hours-1",
+                    vehicleId = generator.id,
+                    dateTime = LocalDateTime.of(2026, 1, 2, 8, 0),
+                    hours = 42.5,
+                    source = MeterLogSource.HOUR_METER,
+                ),
+            ),
+            maintenanceItems = listOf(item),
+            maintenanceServiceLogs = listOf(
+                MaintenanceServiceLog(
+                    id = "load-test-log",
+                    vehicleId = generator.id,
+                    maintenanceItemId = item.id,
+                    dateTime = LocalDateTime.of(2026, 1, 3, 8, 0),
+                    odometer = 0.0,
+                    hours = 42.5,
+                    cost = 0.0,
+                ),
+            ),
+        )
+
+        val decoded = FuelJsonCodec.decode(FuelJsonCodec.encode(roundTripData))
+
+        assertEquals(roundTripData, decoded)
+        assertEquals(42.5, decoded.vehicles.single().currentHours ?: -1.0, 0.0001)
+        assertEquals(50.0, decoded.maintenanceItems.single().intervalHours ?: -1.0, 0.0001)
+        assertEquals(MeterLogSource.HOUR_METER, decoded.meterLogs.single().source)
+    }
+
+    @Test
+    fun jsonRoundTripAllowsOptionalElectricBatteryCapacity() {
+        val golfCart = vehicle.copy(
+            id = "golf-cart-1",
+            name = "Golf Cart",
+            assetCategory = AssetCategory.EQUIPMENT,
+            assetType = AssetType.GOLF_CART,
+            fuelType = FuelType.ELECTRIC,
+            vehicleType = VehicleType.EV,
+            currentMileage = 0.0,
+            currentHours = null,
+            tankCapacity = 0.0,
+            batteryCapacity = null,
+        )
+
+        val decoded = FuelJsonCodec.decode(FuelJsonCodec.encode(FuelMathData(vehicles = listOf(golfCart))))
+
+        assertEquals(FuelType.ELECTRIC, decoded.vehicles.single().fuelType)
+        assertNull(decoded.vehicles.single().batteryCapacity)
     }
 
     @Test

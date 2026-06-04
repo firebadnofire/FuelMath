@@ -1,6 +1,6 @@
 # Fuel Math
 
-Fuel Math is an offline-first Android app for tracking vehicle operating costs and preventative maintenance. The project is intentionally narrow: it aims to help a person manage personally owned vehicles, understand what maintenance is due next, and keep a clear local record of what the vehicle costs to run.
+Fuel Math is an offline-first Android app for tracking personally owned vehicle and equipment operating costs and preventative maintenance. The project is intentionally narrow: it aims to help a person manage local asset records, understand what maintenance is due next, and keep a clear local record of what each asset costs to run.
 
 ## Overview
 
@@ -10,16 +10,16 @@ The app is being built as a local maintenance checkbook rather than a generic fl
 - What is due soon?
 - Which maintenance items still need baseline service history?
 - What should I do next?
-- What has this vehicle cost me to operate?
+- What has this asset cost me to operate?
 
 ## Current App Shape
 
 The repository currently contains a native Android app built with Kotlin, Android Views, and Material components. The present implementation includes:
 
-- Multiple vehicles with vehicle-type-aware summaries
+- Multiple active assets with vehicle/equipment-aware summaries
 - Preventative maintenance items, categories, and service history
-- Manual mileage-aware maintenance calculations
-- Fuel logging for liquid-fuel vehicles
+- Manual mileage and hour-meter-aware maintenance calculations
+- Fuel logging for liquid-fuel assets
 - Charging logging for EV and plug-in hybrid workflows
 - Cost, efficiency, health score, and recommendation summaries
 - Local JSON backup and restore
@@ -27,17 +27,15 @@ The repository currently contains a native Android app built with Kotlin, Androi
 
 Data is stored on-device in `SharedPreferences` as app-managed JSON through [`FuelRepository.kt`](/C:/Users/william/Desktop/git/FuelMath/app/src/main/java/org/archuser/fuelmath/FuelRepository.kt).
 
-## Supported Vehicle Types
+## Supported Asset Shape
 
-- Gasoline
-- Diesel
-- Hybrid
-- Plug-in hybrid
-- EV
-- Motorcycle
-- Other
+Assets track three separate dimensions:
 
-Vehicle type affects which fields, labels, units, and log actions the app exposes. For example, EVs use charging terminology and battery capacity, while liquid-fuel vehicles use fuel terminology and tank capacity.
+- Category: vehicle or equipment
+- Asset type: car/truck, motorcycle, trailer, skid loader, chainsaw, generator, golf cart, and other supported equipment types
+- Fuel / energy type: gasoline, diesel, mixed gas, propane, natural gas, electric, hybrids, plug-in hybrids, none, or other
+
+Those selections affect which fields, labels, units, maintenance templates, and log actions the app exposes. For example, EVs use charging terminology and battery capacity, while hour-meter equipment can use hours, fuel-per-hour, and hour-based maintenance intervals.
 
 ## Project Scope
 
