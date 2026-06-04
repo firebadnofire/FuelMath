@@ -80,6 +80,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    @Deprecated("Uses platform back dispatch for default behavior when no asset detail is open.")
+    override fun onBackPressed() {
+        if (selectedVehicleId != null) {
+            renderMainScreen()
+            return
+        }
+        super.onBackPressed()
+    }
+
     private fun renderMainScreen() {
         selectedVehicleId = null
         title = getString(R.string.app_name)
