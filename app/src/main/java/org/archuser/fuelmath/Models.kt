@@ -290,6 +290,7 @@ object MaintenanceDefaults {
     ): List<MaintenanceTemplateDefinition> = listOf(
         MaintenanceTemplateDefinition("Front Tires", CATEGORY_WEAR_ITEMS, intervalMiles = intervalMiles, intervalTimeDays = intervalTimeDays, importance = importance),
         MaintenanceTemplateDefinition("Rear Tires", CATEGORY_WEAR_ITEMS, intervalMiles = intervalMiles, intervalTimeDays = intervalTimeDays, importance = importance),
+        MaintenanceTemplateDefinition("Tire Rotation", CATEGORY_WEAR_ITEMS, intervalMiles = intervalMiles, intervalTimeDays = intervalTimeDays, importance = importance),
     )
 
     private val liquidFuelTemplates: List<MaintenanceTemplateDefinition> = listOf(
