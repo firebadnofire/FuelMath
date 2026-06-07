@@ -45,7 +45,7 @@ object FuelCalculator {
         val totalMaintenanceCost = vehicleServiceLogs.sumMaintenanceCostSafe { it.cost }
         val totalCost = totalFuelCost + totalChargingCost + totalMaintenanceCost
         val totalDistance = if (AssetRules.supportsMileage(vehicle)) {
-            calculateTotalDistance(vehicleEnergyEntries)
+            calculateTotalDistance(vehicle, vehicleEnergyEntries, vehicleServiceLogs, vehicleMeterLogs)
         } else {
             null
         }
@@ -875,10 +875,18 @@ object FuelCalculator {
             MaintenanceStatus.GOOD -> state.urgencySortValue
         }
 
-    private fun calculateTotalDistance(fuelEntries: List<FuelEntry>): Double? {
-        val values = fuelEntries
-            .map { it.odometer }
-            .filter { it.isFinite() && it >= 0.0 }
+    private fun calculateTotalDistance(
+        vehicle: Vehicle,
+        fuelEntries: List<FuelEntry>,
+        serviceLogs: List<MaintenanceServiceLog>,
+        meterLogs: List<MeterLog>,
+    ): Double? {
+        val values = buildList {
+            add(vehicle.currentMileage)
+            addAll(fuelEntries.map { it.odometer })
+            addAll(serviceLogs.map { it.odometer })
+            addAll(meterLogs.mapNotNull { it.mileage })
+        }.filter { it.isFinite() && it >= 0.0 }
         if (values.size < 2) return null
         val distance = values.maxOrNull()!! - values.minOrNull()!!
         return distance.takeIf { it.isFinite() && it > 0.0 }
