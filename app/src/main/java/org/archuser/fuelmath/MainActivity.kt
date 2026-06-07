@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.text.InputType
+import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
@@ -50,6 +51,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var repository: FuelRepository
     private var data: FuelMathData = FuelMathData()
     private var selectedVehicleId: String? = null
+    private var pendingAssetExportVehicleId: String? = null
 
     private val currencyFormatter: NumberFormat = NumberFormat.getCurrencyInstance()
     private val dateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.US)
@@ -103,6 +105,7 @@ class MainActivity : AppCompatActivity() {
             "Settings" to { showSettingsDialog() },
             "Backup" to { createDocument(REQUEST_BACKUP_JSON, "application/json", "fuel-math-backup.json") },
             "Restore" to { openRestoreDocument() },
+            "Import Asset" to { openAssetImportDocument() },
         )
 
         val activeVehicles = FuelCalculator.activeVehicles(data.vehicles)
@@ -415,11 +418,49 @@ class MainActivity : AppCompatActivity() {
     ): View =
         buildCard().apply {
             val item = state.item
-            val content = cardContent()
-            content.addText(item.name, 17f, Typeface.BOLD)
-            content.addText("${state.category.name}   ${state.status.displayLabel}   ${item.importance.displayLabel} importance")
+            val content = cardContent(compact = collapsible)
+            val titleView = if (collapsible) {
+                val header = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.TOP
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    )
+                }
+                val title = TextView(this@MainActivity).apply {
+                    text = item.name
+                    textSize = 17f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(color(R.color.text_primary))
+                    includeFontPadding = true
+                    letterSpacing = 0f
+                    layoutParams = LinearLayout.LayoutParams(
+                        0,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        1f,
+                    )
+                }
+                val arrow = TextView(this@MainActivity).apply {
+                    text = "⌄"
+                    textSize = 16f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(color(R.color.text_secondary))
+                    gravity = Gravity.CENTER
+                    includeFontPadding = false
+                    layoutParams = LinearLayout.LayoutParams(24.dp(), 24.dp())
+                }
+                header.addView(title)
+                header.addView(arrow)
+                content.addView(header)
+                arrow
+            } else {
+                content.addText(item.name, 17f, Typeface.BOLD)
+                null
+            }
             val details = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
+                addText("${state.category.name}   ${state.status.displayLabel}   ${item.importance.displayLabel} importance")
                 addText(formatInterval(vehicle, item), colorRes = R.color.text_secondary)
                 addText(formatLastService(vehicle, state), colorRes = R.color.text_secondary)
                 addText(formatNextDue(vehicle, state), colorRes = R.color.text_secondary)
@@ -431,36 +472,16 @@ class MainActivity : AppCompatActivity() {
                 )
             }
             if (collapsible) {
-                val toggle = MaterialButton(this@MainActivity).apply {
-                    text = "Show"
-                    isAllCaps = false
-                    cornerRadius = 8.dp()
-                    insetTop = 0
-                    insetBottom = 0
-                    minWidth = 0
-                    minimumWidth = 0
-                    minHeight = 36.dp()
-                    applyActionTone("Show")
-                    layoutParams = LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ).apply {
-                        topMargin = 6.dp()
-                        bottomMargin = 6.dp()
-                    }
-                }
                 fun setExpanded(expanded: Boolean) {
                     details.visibility = if (expanded) View.VISIBLE else View.GONE
-                    toggle.text = if (expanded) "Hide" else "Show"
+                    titleView?.text = if (expanded) "⌃" else "⌄"
                     content.contentDescription = if (expanded) {
                         "${item.name} maintenance details expanded"
                     } else {
                         "${item.name} maintenance details collapsed"
                     }
                 }
-                toggle.setOnClickListener { setExpanded(details.visibility != View.VISIBLE) }
                 setOnClickListener { setExpanded(details.visibility != View.VISIBLE) }
-                content.addView(toggle)
                 setExpanded(false)
             }
             content.addView(details)
@@ -1276,6 +1297,33 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun confirmImportAsset(importedData: FuelMathData) {
+        if (importedData.vehicles.size != 1) {
+            showError("Asset import files must contain exactly one asset.")
+            return
+        }
+
+        val importedVehicle = importedData.vehicles.single()
+        val existingVehicle = data.vehicles.firstOrNull { it.id == importedVehicle.id }
+        val message = if (existingVehicle == null) {
+            "Import ${importedVehicle.name} with its fuel, charging, meter, maintenance item, and service history?"
+        } else {
+            "Replace local records for ${existingVehicle.name} with the imported ${importedVehicle.name} asset history? Other assets will not be changed."
+        }
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Import Asset")
+            .setMessage(message)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Import") { _, _ ->
+                val updated = mergeImportedAsset(data, importedData)
+                if (persistData(updated, "Asset imported.")) {
+                    renderMainScreen()
+                }
+            }
+            .show()
+    }
+
     private fun persistData(updatedData: FuelMathData, successMessage: String): Boolean {
         return try {
             if (repository.saveData(updatedData)) {
@@ -1303,6 +1351,15 @@ class MainActivity : AppCompatActivity() {
         startActivityForResult(intent, requestCode)
     }
 
+    private fun createAssetExportDocument(vehicle: Vehicle) {
+        pendingAssetExportVehicleId = vehicle.id
+        createDocument(
+            REQUEST_EXPORT_ASSET_JSON,
+            "application/json",
+            "fuel-math-${fileSlug(vehicle.name)}-asset.json",
+        )
+    }
+
     private fun openRestoreDocument() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -1310,6 +1367,15 @@ class MainActivity : AppCompatActivity() {
         }
         @Suppress("DEPRECATION")
         startActivityForResult(intent, REQUEST_RESTORE_JSON)
+    }
+
+    private fun openAssetImportDocument() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/json"
+        }
+        @Suppress("DEPRECATION")
+        startActivityForResult(intent, REQUEST_IMPORT_ASSET_JSON)
     }
 
     @Deprecated("Deprecated by Android; retained here to avoid adding Activity Result dependencies.")
@@ -1321,6 +1387,8 @@ class MainActivity : AppCompatActivity() {
         when (requestCode) {
             REQUEST_BACKUP_JSON -> writeDocument(uri, repository.encodeBackup(data), "Backup saved.")
             REQUEST_RESTORE_JSON -> restoreDocument(uri)
+            REQUEST_EXPORT_ASSET_JSON -> exportAssetDocument(uri)
+            REQUEST_IMPORT_ASSET_JSON -> importAssetDocument(uri)
         }
     }
 
@@ -1352,6 +1420,68 @@ class MainActivity : AppCompatActivity() {
         } catch (error: SecurityException) {
             showError("Android denied read access to the selected backup.", error)
         }
+    }
+
+    private fun exportAssetDocument(uri: Uri) {
+        val vehicleId = pendingAssetExportVehicleId
+        pendingAssetExportVehicleId = null
+        val vehicle = data.vehicles.firstOrNull { it.id == vehicleId }
+        if (vehicle == null) {
+            showError("Unable to export asset because it no longer exists.")
+            return
+        }
+        writeDocument(uri, repository.encodeBackup(assetTransferData(vehicle.id)), "Asset exported.")
+    }
+
+    private fun importAssetDocument(uri: Uri) {
+        try {
+            val input = contentResolver.openInputStream(uri)
+                ?: throw IOException("Could not open document for reading.")
+            val json = input.use { String(it.readBytes(), Charsets.UTF_8) }
+            val importedData = repository.decodeBackup(json)
+            confirmImportAsset(importedData)
+        } catch (error: IOException) {
+            showError("Unable to read the selected asset import.", error)
+        } catch (error: RuntimeException) {
+            showError("The selected asset import is invalid and was not imported.", error)
+        } catch (error: SecurityException) {
+            showError("Android denied read access to the selected asset import.", error)
+        }
+    }
+
+    private fun assetTransferData(vehicleId: String): FuelMathData {
+        val vehicle = data.vehicles.firstOrNull { it.id == vehicleId }
+            ?: throw IllegalArgumentException("Asset does not exist: $vehicleId")
+        val maintenanceItems = data.maintenanceItems.filter { it.vehicleId == vehicleId }
+        val categoryIds = maintenanceItems.map { it.categoryId }.toSet()
+        return FuelMathData(
+            vehicles = listOf(vehicle),
+            fuelEntries = data.fuelEntries.filter { it.vehicleId == vehicleId },
+            meterLogs = data.meterLogs.filter { it.vehicleId == vehicleId },
+            maintenanceCategories = data.maintenanceCategories.filter { it.id in categoryIds },
+            maintenanceItems = maintenanceItems,
+            maintenanceServiceLogs = data.maintenanceServiceLogs.filter { it.vehicleId == vehicleId },
+            settings = AppSettings(),
+        )
+    }
+
+    private fun mergeImportedAsset(currentData: FuelMathData, importedData: FuelMathData): FuelMathData {
+        require(importedData.vehicles.size == 1) { "Asset import files must contain exactly one asset." }
+        val importedVehicle = importedData.vehicles.single()
+        val importedVehicleId = importedVehicle.id
+        val importedCategoryIds = importedData.maintenanceCategories.map { it.id }.toSet()
+
+        return currentData.copy(
+            vehicles = currentData.vehicles.filterNot { it.id == importedVehicleId } + importedVehicle,
+            fuelEntries = currentData.fuelEntries.filterNot { it.vehicleId == importedVehicleId } + importedData.fuelEntries,
+            meterLogs = currentData.meterLogs.filterNot { it.vehicleId == importedVehicleId } + importedData.meterLogs,
+            maintenanceCategories = currentData.maintenanceCategories
+                .filterNot { it.id in importedCategoryIds } + importedData.maintenanceCategories,
+            maintenanceItems = currentData.maintenanceItems
+                .filterNot { it.vehicleId == importedVehicleId } + importedData.maintenanceItems,
+            maintenanceServiceLogs = currentData.maintenanceServiceLogs
+                .filterNot { it.vehicleId == importedVehicleId } + importedData.maintenanceServiceLogs,
+        )
     }
 
     private fun createScreenRoot(toolbarTitle: String, onBack: (() -> Unit)? = null): LinearLayout {
@@ -1430,10 +1560,14 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-    private fun cardContent(): LinearLayout =
+    private fun cardContent(compact: Boolean = false): LinearLayout =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(18.dp(), 16.dp(), 18.dp(), 18.dp())
+            if (compact) {
+                setPadding(14.dp(), 10.dp(), 12.dp(), 10.dp())
+            } else {
+                setPadding(18.dp(), 16.dp(), 18.dp(), 18.dp())
+            }
         }
 
     private fun LinearLayout.addSectionHeader(value: String): TextView =
@@ -1795,6 +1929,7 @@ class MainActivity : AppCompatActivity() {
             if (AssetRules.supportsMileage(vehicle) || AssetRules.supportsHours(vehicle)) add("Update Meter" to { showMeterUpdateDialog(vehicle) })
             add("Log Service" to { showLogServiceDialog(vehicle) })
             add("Archive" to { confirmArchiveVehicle(vehicle) })
+            add("Export" to { createAssetExportDocument(vehicle) })
         }.toTypedArray()
 
     private fun entryCountSummary(summary: VehicleSummary): String =
@@ -1828,6 +1963,12 @@ class MainActivity : AppCompatActivity() {
             EnergyEntryType.CHARGING -> if (entry.isFullTank) "Full charge" else "Partial charge"
             EnergyEntryType.FUEL -> if (entry.isFullTank) "Full tank" else "Partial fill"
         }
+
+    private fun fileSlug(value: String): String =
+        value.lowercase(Locale.US)
+            .replace(Regex("[^a-z0-9]+"), "-")
+            .trim('-')
+            .ifBlank { "asset" }
 
     private fun formatRecommendation(state: MaintenanceItemState?): String =
         state?.let {
@@ -2058,5 +2199,7 @@ class MainActivity : AppCompatActivity() {
         private const val REQUEST_BACKUP_JSON = 1002
         private const val REQUEST_RESTORE_JSON = 1003
         private const val REQUEST_NOTIFICATIONS = 1004
+        private const val REQUEST_EXPORT_ASSET_JSON = 1005
+        private const val REQUEST_IMPORT_ASSET_JSON = 1006
     }
 }
