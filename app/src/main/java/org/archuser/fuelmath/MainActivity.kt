@@ -141,7 +141,7 @@ class MainActivity : AppCompatActivity() {
 
         root.addSectionHeader("Archived Assets")
         root.addText(
-            "Archived assets stay out of the main dashboard. You can review them here and permanently delete one when you no longer need its local history.",
+            "Archived assets stay out of the main dashboard. You can review, restore, or permanently delete one when you no longer need its local history.",
             colorRes = R.color.text_secondary,
         )
         root.addActions(
@@ -357,7 +357,10 @@ class MainActivity : AppCompatActivity() {
             content.addText("Maintenance history: ${summary.maintenanceServiceLogCount} service logs across ${summary.maintenanceItemCount} active items")
             content.addText("${entryCountSummary(summary)}   Meter updates: ${summary.meterLogCount}", colorRes = R.color.text_secondary)
             content.addText("Total recorded cost: ${currencyFormatter.format(summary.totalCost)}")
-            content.addActions("Delete Archive" to { confirmDeleteArchivedVehicle(vehicle) })
+            content.addActions(
+                "Restore Archive" to { confirmRestoreArchivedVehicle(vehicle) },
+                "Delete Archive" to { confirmDeleteArchivedVehicle(vehicle) },
+            )
             addView(content)
         }
     }
@@ -1243,6 +1246,27 @@ class MainActivity : AppCompatActivity() {
                     },
                 )
                 if (persistData(updated, "Asset archived.")) renderMainScreen()
+            }
+            .show()
+    }
+
+    private fun confirmRestoreArchivedVehicle(vehicle: Vehicle) {
+        if (!vehicle.archived) {
+            showToast("Only archived assets can be restored from Archives.")
+            return
+        }
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Restore Asset")
+            .setMessage("Restore ${vehicle.name}? Its logs and maintenance history will be kept, and it will appear on the main dashboard again.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Restore") { _, _ ->
+                val updated = data.copy(
+                    vehicles = data.vehicles.map {
+                        if (it.id == vehicle.id) it.copy(archived = false, updatedAt = LocalDateTime.now()) else it
+                    },
+                )
+                if (persistData(updated, "Asset restored.")) renderArchiveScreen()
             }
             .show()
     }
@@ -2268,7 +2292,7 @@ class MainActivity : AppCompatActivity() {
                 backgroundTintList = ColorStateList.valueOf(color(R.color.action_archive_bg))
                 setTextColor(color(R.color.action_archive_fg))
             }
-            normalized.startsWith("add") || normalized.startsWith("log") || normalized.startsWith("update meter") -> {
+            normalized.startsWith("add") || normalized.startsWith("log") || normalized.startsWith("update meter") || normalized.startsWith("restore") -> {
                 backgroundTintList = ColorStateList.valueOf(color(R.color.fuel_primary_light))
                 setTextColor(color(R.color.fuel_primary_dark))
             }

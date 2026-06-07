@@ -1,6 +1,8 @@
 # Fuel Math
 
-Fuel Math is an offline-first Android app for tracking personally owned vehicle and equipment operating costs and preventative maintenance. The project is intentionally narrow: it aims to help a person manage local asset records, understand what maintenance is due next, and keep a clear local record of what each asset costs to run.
+Fuel Math is a free Android maintenance log for the vehicles and equipment you own. It helps you keep track of what needs service next, what is overdue, and what each asset costs to operate.
+
+It is built for personal use: cars, trucks, motorcycles, trailers, mowers, generators, skid loaders, chainsaws, golf carts, and other equipment. There is no account to create and no cloud service to depend on.
 
 <p>
   <a href="https://archuser.org/fuelmath.apk">
@@ -11,132 +13,93 @@ Fuel Math is an offline-first Android app for tracking personally owned vehicle 
   </a>
 </p>
 
-Version: `v0.2.1`
+Current version: `v0.3.0`
 
-## Overview
+## Why Use It
 
-The app is being built as a local maintenance checkbook rather than a generic fleet platform or cloud service. Its core job is to answer a few practical questions quickly:
+Most maintenance records end up scattered across glove boxes, notebooks, receipts, text files, and memory. Fuel Math gives those records one simple place to live.
 
-- What is overdue right now?
-- What is due soon?
-- Which maintenance items still need baseline service history?
-- What should I do next?
-- What has this asset cost me to operate?
+Use it to answer practical questions:
 
-## Current App Shape
+- What maintenance is overdue?
+- What is coming due soon?
+- Which service items still need a baseline record?
+- How much have I spent on fuel, charging, and maintenance?
+- What does this asset cost me per mile or per hour?
 
-The repository currently contains a native Android app built with Kotlin, Android Views, and Material components. The present implementation includes:
+Fuel Math is not a fleet management platform. It is a local checkbook for keeping personally owned machines maintained.
 
-- Multiple active assets with vehicle/equipment-aware summaries
-- Preventative maintenance items, categories, and service history
-- Manual mileage and hour-meter-aware maintenance calculations
-- Fuel logging for liquid-fuel assets
-- Charging logging for EV and plug-in hybrid workflows
-- Cost, efficiency, health score, and recommendation summaries
-- Local JSON backup and restore
-- Local-only persistence with no account requirement
+## What It Tracks
 
-Data is stored on-device in `SharedPreferences` as app-managed JSON through [`FuelRepository.kt`](/C:/Users/william/Desktop/git/FuelMath/app/src/main/java/org/archuser/fuelmath/FuelRepository.kt).
+- Multiple vehicles and equipment assets
+- Preventative maintenance items and service history
+- Mileage-based, hour-based, time-based, and mixed maintenance intervals
+- Manual mileage and hour-meter updates
+- Fuel purchases for gasoline, diesel, mixed gas, propane, natural gas, and hybrids
+- Charging sessions for electric assets and plug-in hybrids
+- Maintenance, fuel, charging, and operating cost summaries
+- Local backup and restore using JSON files
 
-## Supported Asset Shape
+## Built For Vehicles And Equipment
 
-Assets track three separate dimensions:
+Fuel Math treats vehicles and equipment as first-class records. When you add an asset, you choose what it is and what powers it.
 
-- Category: vehicle or equipment
-- Asset type: car/truck, motorcycle, trailer, skid loader, chainsaw, generator, golf cart, and other supported equipment types
-- Fuel / energy type: gasoline, diesel, mixed gas, propane, natural gas, electric, hybrids, plug-in hybrids, none, or other
+Examples:
 
-Those selections affect which fields, labels, units, maintenance templates, and log actions the app exposes. For example, EVs use charging terminology and battery capacity, while hour-meter equipment can use hours, fuel-per-hour, and hour-based maintenance intervals.
+- A gasoline truck can track mileage, fuel purchases, MPG, oil changes, tires, and brake work.
+- A diesel skid loader can track hours, fuel use per hour, hydraulic service, filters, and grease points.
+- An electric golf cart can track charging, battery-related maintenance, tires, brakes, and cost to run.
+- A trailer can track inspections and service without forcing fuel or engine fields.
 
-## Project Scope
+The app changes its fields and labels based on the asset. Electric assets do not get fuel logs. Hour-meter equipment does not have to pretend mileage is useful.
 
-This repo follows a narrow MVP direction:
+## Offline By Design
 
-- Offline-first local storage is the source of truth
-- Maintenance history is preserved as logs
-- Derived values are calculated from stored records
-- The dashboard should prioritize urgent work before historical detail
-- Archived or out-of-scope product ideas should not expand the app into a SaaS, marketplace, fleet manager, or spreadsheet replacement
+Fuel Math stores its records on your device. It does not require an account, internet access, cloud sync, or a subscription.
 
-If a feature does not support preventative maintenance, due-status calculation, mileage tracking, fuel or charging tracking, or operating cost summaries, it is probably outside the intended MVP.
+That also means you are responsible for keeping backups if the records matter to you. The app includes local JSON backup and restore so you can export your data and keep a copy somewhere safe.
 
-## Repository Layout
+## Current Limitations
 
-- [`app/`](/C:/Users/william/Desktop/git/FuelMath/app): Android application module
-- [`app/src/main/java/org/archuser/fuelmath/MainActivity.kt`](/C:/Users/william/Desktop/git/FuelMath/app/src/main/java/org/archuser/fuelmath/MainActivity.kt): Main UI flow
-- [`app/src/main/java/org/archuser/fuelmath/FuelCalculator.kt`](/C:/Users/william/Desktop/git/FuelMath/app/src/main/java/org/archuser/fuelmath/FuelCalculator.kt): Calculation and summary logic
-- [`app/src/main/java/org/archuser/fuelmath/Models.kt`](/C:/Users/william/Desktop/git/FuelMath/app/src/main/java/org/archuser/fuelmath/Models.kt): Core data models and enums
-- [`app/src/main/java/org/archuser/fuelmath/FuelJsonCodec.kt`](/C:/Users/william/Desktop/git/FuelMath/app/src/main/java/org/archuser/fuelmath/FuelJsonCodec.kt): Local JSON serialization and migration logic
-- [`app/src/test/java/org/archuser/fuelmath/FuelCalculatorTest.kt`](/C:/Users/william/Desktop/git/FuelMath/app/src/test/java/org/archuser/fuelmath/FuelCalculatorTest.kt): Unit tests for calculation-heavy behavior
-- [`.forgejo/workflows/release-apk.yml`](/C:/Users/william/Desktop/git/FuelMath/.forgejo/workflows/release-apk.yml): Tagged release APK automation
+Fuel Math is intentionally narrow. It does not include VIN decoding, OBD integration, manufacturer-specific service schedules, shop marketplaces, cloud sync, user accounts, payment tools, or commercial dispatch features.
 
-## Build Requirements
+The goal is simple: help you know what needs attention next and what it has cost to operate your equipment.
+
+## For Builders
+
+This repository contains a native Android app built with Kotlin, Android Views, and Material components.
+
+Repository highlights:
+
+- `app/`: Android application module
+- `app/src/main/java/org/archuser/fuelmath/MainActivity.kt`: Main UI flow
+- `app/src/main/java/org/archuser/fuelmath/FuelCalculator.kt`: Calculation and summary logic
+- `app/src/main/java/org/archuser/fuelmath/Models.kt`: Core data models and enums
+- `app/src/main/java/org/archuser/fuelmath/FuelRepository.kt`: Local persistence
+- `app/src/main/java/org/archuser/fuelmath/FuelJsonCodec.kt`: JSON backup, restore, and migration logic
+- `app/src/test/java/org/archuser/fuelmath/FuelCalculatorTest.kt`: Unit tests for calculation-heavy behavior
+
+Build requirements:
 
 - Android Studio or Android SDK command-line tools
-- Java 11 or newer for local builds
+- Java 11 or newer
 
-Android configuration in [`app/build.gradle.kts`](/C:/Users/william/Desktop/git/FuelMath/app/build.gradle.kts):
-
-- `compileSdk = 36`
-- `targetSdk = 36`
-- `minSdk = 26`
-- `versionName = "v0.2.2"`
-
-## Local Build
-
-From the repository root:
+Build a debug APK:
 
 ```powershell
 .\gradlew.bat assembleDebug
 ```
 
-To run unit tests:
+Run unit tests:
 
 ```powershell
 .\gradlew.bat testDebugUnitTest
 ```
 
-To build a release APK:
+Build a release APK:
 
 ```powershell
 .\gradlew.bat assembleRelease
 ```
 
-## Release Signing
-
-Release signing is enabled only when all of the following environment variables are present:
-
-- `RELEASE_KEYSTORE_PATH`
-- `KEYSTORE_PASSWORD`
-- `KEY_ALIAS`
-- `KEY_PASSWORD`
-
-Without them, a release build can still run, but it remains unsigned.
-
-## Release Automation
-
-Tagged releases are built through Forgejo automation in [`.forgejo/workflows/release-apk.yml`](/C:/Users/william/Desktop/git/FuelMath/.forgejo/workflows/release-apk.yml).
-
-Current workflow behavior:
-
-- Runs on pushed tags matching `v*` or `V*`
-- Builds a signed release APK when required secrets are configured
-- Publishes the APK to Forgejo releases
-- Optionally mirrors the release to GitHub when the matching GitHub variables and secrets are set
-
-## Testing
-
-The current test suite focuses on calculation-heavy logic, including:
-
-- Fuel efficiency and EV efficiency calculations
-- Maintenance due-state calculations
-- Health score and recommendation ordering
-- JSON schema migration and round-trip behavior
-- Reminder snapshot generation
-- Export formatting
-
-This keeps core maintenance and cost logic testable outside the UI.
-
-## Current Version
-
-`v0.2.1`
+Release signing is used only when the expected keystore environment variables are configured. Without them, release builds remain unsigned.
