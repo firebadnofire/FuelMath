@@ -11,7 +11,7 @@ Fuel Math is an offline-first Android app for tracking personally owned vehicle 
   </a>
 </p>
 
-Version: `v0.1.0`
+Version: `v0.2.0`
 
 ## Overview
 
@@ -80,7 +80,7 @@ Android configuration in [`app/build.gradle.kts`](/C:/Users/william/Desktop/git/
 - `compileSdk = 36`
 - `targetSdk = 36`
 - `minSdk = 26`
-- `versionName = "v0.1.0"`
+- `versionName = "v0.2.0"`
 
 ## Local Build
 
@@ -139,4 +139,4 @@ This keeps core maintenance and cost logic testable outside the UI.
 
 ## Current Version
 
-`v0.1.0`
+`v0.2.0`

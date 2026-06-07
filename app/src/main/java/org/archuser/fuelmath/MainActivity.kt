@@ -229,7 +229,7 @@ class MainActivity : AppCompatActivity() {
             root.addText("No maintenance items yet.", 16f, Typeface.NORMAL, R.color.text_secondary)
         } else {
             states.sortedBy { it.item.name.lowercase() }.forEach { state ->
-                root.addView(buildMaintenanceItemCard(vehicle, state))
+                root.addView(buildMaintenanceItemCard(vehicle, state, collapsible = true))
             }
         }
 
@@ -408,21 +408,62 @@ class MainActivity : AppCompatActivity() {
             addView(content)
         }
 
-    private fun buildMaintenanceItemCard(vehicle: Vehicle, state: MaintenanceItemState): View =
+    private fun buildMaintenanceItemCard(
+        vehicle: Vehicle,
+        state: MaintenanceItemState,
+        collapsible: Boolean = false,
+    ): View =
         buildCard().apply {
             val item = state.item
             val content = cardContent()
             content.addText(item.name, 17f, Typeface.BOLD)
             content.addText("${state.category.name}   ${state.status.displayLabel}   ${item.importance.displayLabel} importance")
-            content.addText(formatInterval(vehicle, item), colorRes = R.color.text_secondary)
-            content.addText(formatLastService(vehicle, state), colorRes = R.color.text_secondary)
-            content.addText(formatNextDue(vehicle, state), colorRes = R.color.text_secondary)
-            if (item.notes.isNotBlank()) content.addText(item.notes, colorRes = R.color.text_secondary)
-            content.addActions(
-                "Log Service" to { showLogServiceDialog(vehicle, item) },
-                "Edit" to { showMaintenanceItemDialog(vehicle, item) },
-                "Disable" to { confirmDeleteMaintenanceItem(vehicle, item) },
-            )
+            val details = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                addText(formatInterval(vehicle, item), colorRes = R.color.text_secondary)
+                addText(formatLastService(vehicle, state), colorRes = R.color.text_secondary)
+                addText(formatNextDue(vehicle, state), colorRes = R.color.text_secondary)
+                if (item.notes.isNotBlank()) addText(item.notes, colorRes = R.color.text_secondary)
+                addActions(
+                    "Log Service" to { showLogServiceDialog(vehicle, item) },
+                    "Edit" to { showMaintenanceItemDialog(vehicle, item) },
+                    "Disable" to { confirmDeleteMaintenanceItem(vehicle, item) },
+                )
+            }
+            if (collapsible) {
+                val toggle = MaterialButton(this@MainActivity).apply {
+                    text = "Show"
+                    isAllCaps = false
+                    cornerRadius = 8.dp()
+                    insetTop = 0
+                    insetBottom = 0
+                    minWidth = 0
+                    minimumWidth = 0
+                    minHeight = 36.dp()
+                    applyActionTone("Show")
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ).apply {
+                        topMargin = 6.dp()
+                        bottomMargin = 6.dp()
+                    }
+                }
+                fun setExpanded(expanded: Boolean) {
+                    details.visibility = if (expanded) View.VISIBLE else View.GONE
+                    toggle.text = if (expanded) "Hide" else "Show"
+                    content.contentDescription = if (expanded) {
+                        "${item.name} maintenance details expanded"
+                    } else {
+                        "${item.name} maintenance details collapsed"
+                    }
+                }
+                toggle.setOnClickListener { setExpanded(details.visibility != View.VISIBLE) }
+                setOnClickListener { setExpanded(details.visibility != View.VISIBLE) }
+                content.addView(toggle)
+                setExpanded(false)
+            }
+            content.addView(details)
             addView(content)
         }
 

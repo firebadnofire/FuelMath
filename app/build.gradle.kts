@@ -22,8 +22,8 @@ android {
         applicationId = "org.archuser.fuelmath"
         minSdk = 26
         targetSdk = 36
-        versionCode = 7
-        versionName = "v0.1.7"
+        versionCode = 8
+        versionName = "v0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
