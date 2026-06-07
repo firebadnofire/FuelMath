@@ -162,6 +162,32 @@ class FuelCalculatorTest {
     }
 
     @Test
+    fun summaryDistanceIgnoresManualMeterUpdatesAfterFuelEntries() {
+        val entries = listOf(
+            fuelEntry("a", odometer = 1000.0, fuelAmount = 8.0, pricePerUnit = 3.0, isFullTank = true),
+            fuelEntry("b", odometer = 1200.0, fuelAmount = 5.0, pricePerUnit = 4.0, isFullTank = true),
+        )
+        val meterLog = MeterLog(
+            id = "meter-after-fuel",
+            vehicleId = vehicle.id,
+            dateTime = LocalDateTime.of(2026, 1, 2, 12, 0),
+            mileage = 12_500.0,
+            source = MeterLogSource.MANUAL,
+        )
+
+        val summary = FuelCalculator.buildVehicleSummary(
+            vehicle.copy(currentMileage = 12_500.0),
+            data(fuelEntries = entries, meterLogs = listOf(meterLog)),
+            asOfDate,
+        )
+
+        assertEquals(200.0, summary.totalDistance ?: -1.0, 0.0001)
+        assertEquals(0.22, summary.costPerDistance ?: -1.0, 0.0001)
+        assertEquals(40.0, summary.lastEfficiency ?: -1.0, 0.0001)
+        assertEquals(12_500.0, summary.currentMileage, 0.0001)
+    }
+
+    @Test
     fun maintenanceStatusSupportsMileageTimeAndHybridIntervals() {
         val mileageDueSoon = maintenanceItem(
             id = "oil",
@@ -804,6 +830,7 @@ class FuelCalculatorTest {
 
     private fun data(
         fuelEntries: List<FuelEntry> = emptyList(),
+        meterLogs: List<MeterLog> = emptyList(),
         items: List<MaintenanceItem> = listOf(maintenanceItem()),
         serviceLogs: List<MaintenanceServiceLog> = emptyList(),
         settings: AppSettings = AppSettings(),
@@ -811,6 +838,7 @@ class FuelCalculatorTest {
         FuelMathData(
             vehicles = listOf(vehicle),
             fuelEntries = fuelEntries,
+            meterLogs = meterLogs,
             maintenanceItems = items,
             maintenanceServiceLogs = serviceLogs,
             settings = settings,
