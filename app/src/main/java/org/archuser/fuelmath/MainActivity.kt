@@ -285,7 +285,7 @@ class MainActivity : AppCompatActivity() {
             if (AssetRules.supportsMileage(vehicle)) content.addText("Current mileage: ${formatDistance(vehicle, summary.currentMileage)}")
             if (AssetRules.supportsHours(vehicle)) content.addText("Current hours: ${formatHours(summary.currentHours)}")
             if (showsTirePsi(vehicle)) content.addText(formatTirePsiReminder(vehicle))
-            content.addText("Maintenance: ${summary.overdueCount} overdue, ${summary.dueSoonCount} due soon, ${summary.unknownCount} needs baseline")
+            content.addText(formatMaintenanceSummary(summary))
             content.addText("Recommendation: ${formatRecommendation(summary.smartRecommendation)}")
             content.addText("Efficiency: ${formatEfficiency(vehicle, summary.lastEfficiency)}")
             content.addText("Total cost: ${currencyFormatter.format(summary.totalCost)}")
@@ -312,7 +312,7 @@ class MainActivity : AppCompatActivity() {
             if (AssetRules.supportsMileage(vehicle)) content.addText("Current mileage: ${formatDistance(vehicle, summary.currentMileage)}")
             if (AssetRules.supportsHours(vehicle)) content.addText("Current hours: ${formatHours(summary.currentHours)}")
             if (showsTirePsi(vehicle)) content.addText(formatTirePsiReminder(vehicle))
-            content.addText("Maintenance: ${summary.overdueCount} overdue, ${summary.dueSoonCount} due soon, ${summary.unknownCount} needs baseline")
+            content.addText(formatMaintenanceSummary(summary))
             content.addText("Efficiency: ${formatEfficiency(vehicle, summary.lastEfficiency)}")
             if (AssetRules.supportsMileage(vehicle)) content.addText("Tracked distance: ${formatDistance(vehicle, summary.totalDistance)}")
             if (AssetRules.supportsHours(vehicle)) content.addText("Tracked hours: ${formatHours(summary.totalHours)}")
@@ -1763,6 +1763,12 @@ class MainActivity : AppCompatActivity() {
             AssetRules.usesChargingLogs(summary.vehicle) -> "Charging entries: ${summary.chargingEntryCount}"
             AssetRules.usesFuelLogs(summary.vehicle) -> "Fuel entries: ${summary.fuelEntryCount}"
             else -> "Energy entries: 0"
+        }
+
+    private fun formatMaintenanceSummary(summary: VehicleSummary): String =
+        buildString {
+            append("Maintenance: ${summary.overdueCount} overdue, ${summary.dueSoonCount} due soon")
+            if (summary.unknownCount > 0) append(", ${summary.unknownCount} needs baseline")
         }
 
     private fun energyCostTitle(vehicle: Vehicle): String =
