@@ -80,7 +80,7 @@ Android configuration in [`app/build.gradle.kts`](/C:/Users/william/Desktop/git/
 - `compileSdk = 36`
 - `targetSdk = 36`
 - `minSdk = 26`
-- `versionName = "v0.2.1"`
+- `versionName = "v0.2.2"`
 
 ## Local Build
 

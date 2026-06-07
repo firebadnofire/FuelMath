@@ -285,6 +285,7 @@ data class Vehicle(
     val batteryCapacity: Double? = null,
     val recommendedFrontTirePsi: Double? = null,
     val recommendedRearTirePsi: Double? = null,
+    val stationSuggestions: List<String> = emptyList(),
     val distanceUnit: DistanceUnit,
     val volumeUnit: VolumeUnit,
     val energyUnit: EnergyUnit = EnergyUnit.KILOWATT_HOURS,

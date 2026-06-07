@@ -461,6 +461,34 @@ class FuelCalculatorTest {
     }
 
     @Test
+    fun jsonRoundTripPreservesAssetStationSuggestions() {
+        val asset = vehicle.copy(stationSuggestions = listOf("Main Street Fuel", "Home Charger"))
+        val roundTripData = FuelMathData(vehicles = listOf(asset))
+
+        val decoded = FuelJsonCodec.decode(FuelJsonCodec.encode(roundTripData))
+
+        assertEquals(asset.stationSuggestions, decoded.vehicles.single().stationSuggestions)
+    }
+
+    @Test
+    fun jsonBackfillsMissingStationSuggestionsFromAssetFuelHistory() {
+        val oldJson = FuelJsonCodec.encode(
+            FuelMathData(
+                vehicles = listOf(vehicle),
+                fuelEntries = listOf(
+                    fuelEntry("station-a", odometer = 12_100.0, station = "Main Street Fuel"),
+                    fuelEntry("station-b", odometer = 12_200.0, station = "main street fuel"),
+                    fuelEntry("station-c", odometer = 12_300.0, station = "Home Charger"),
+                ),
+            ),
+        ).replace("\"stationSuggestions\":[],", "")
+
+        val decoded = FuelJsonCodec.decode(oldJson)
+
+        assertEquals(listOf("Main Street Fuel", "Home Charger"), decoded.vehicles.single().stationSuggestions)
+    }
+
+    @Test
     fun jsonRoundTripPreservesEquipmentHoursAndMeterLogs() {
         val generator = vehicle.copy(
             id = "generator-1",
@@ -831,6 +859,7 @@ class FuelCalculatorTest {
         pricePerUnit: Double = 3.0,
         isFullTank: Boolean = true,
         entryType: EnergyEntryType = EnergyEntryType.FUEL,
+        station: String = "",
     ): FuelEntry =
         FuelEntry(
             id = id,
@@ -841,5 +870,6 @@ class FuelCalculatorTest {
             pricePerUnit = pricePerUnit,
             isFullTank = isFullTank,
             entryType = entryType,
+            station = station,
         )
 }

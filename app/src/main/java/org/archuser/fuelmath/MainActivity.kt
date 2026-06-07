@@ -25,6 +25,8 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.OnBackPressedCallback
+import androidx.appcompat.widget.ListPopupWindow
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -51,6 +53,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var repository: FuelRepository
     private var data: FuelMathData = FuelMathData()
     private var selectedVehicleId: String? = null
+    private var currentBackAction: (() -> Unit)? = null
     private var pendingAssetExportVehicleId: String? = null
 
     private val currencyFormatter: NumberFormat = NumberFormat.getCurrencyInstance()
@@ -72,6 +75,20 @@ class MainActivity : AppCompatActivity() {
             error
         }
 
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    val backAction = currentBackAction
+                    if (backAction != null) {
+                        backAction()
+                    } else {
+                        finish()
+                    }
+                }
+            },
+        )
+
         MaintenanceReminderScheduler.sync(this, data)
         renderMainScreen()
         loadError?.let {
@@ -80,15 +97,6 @@ class MainActivity : AppCompatActivity() {
                 it,
             )
         }
-    }
-
-    @Deprecated("Uses platform back dispatch for default behavior when no asset detail is open.")
-    override fun onBackPressed() {
-        if (selectedVehicleId != null) {
-            renderMainScreen()
-            return
-        }
-        super.onBackPressed()
     }
 
     private fun renderMainScreen() {
@@ -806,7 +814,15 @@ class MainActivity : AppCompatActivity() {
         }
         val fuelInput = createInput(entryAmountLabel(entryType), decimalInputType())
         val priceInput = createInput("Price per ${FuelCalculator.entryUnitLabel(vehicle, entryType)}", decimalInputType())
-        val locationInput = createInput(if (entryType == EnergyEntryType.CHARGING) "Location" else "Station", InputType.TYPE_CLASS_TEXT)
+        val locationLabel = if (entryType == EnergyEntryType.CHARGING) "Location" else "Station"
+        val locationInput = createInput(locationLabel, InputType.TYPE_CLASS_TEXT)
+        var stationSuggestions = vehicle.stationSuggestions
+        installStationSuggestionDropdown(
+            input = locationInput,
+            vehicleId = vehicle.id,
+            suggestions = { stationSuggestions },
+            onSuggestionsChanged = { stationSuggestions = it },
+        )
         val oilMixInput = createInput("Oil mix ratio", InputType.TYPE_CLASS_TEXT).apply {
             hint = "50:1"
         }
@@ -829,7 +845,7 @@ class MainActivity : AppCompatActivity() {
             addView(hoursLayout)
             addView(labeledView("${entryAmountLabel(entryType)} (${FuelCalculator.entryUnitLabel(vehicle, entryType)})", fuelInput))
             addView(labeledView("Price per ${FuelCalculator.entryUnitLabel(vehicle, entryType)}", priceInput))
-            addView(labeledView(if (entryType == EnergyEntryType.CHARGING) "Location" else "Station", locationInput))
+            addView(labeledView(locationLabel, locationInput))
             addView(oilMixLayout)
             addView(labeledView("Notes", notesInput))
             addView(fullTankSwitch)
@@ -865,6 +881,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 val fuelAmount = parsePositiveDouble(fuelInput, entryAmountLabel(entryType)) ?: return@setOnClickListener
                 val pricePerUnit = parseNonNegativeDouble(priceInput, "Price per unit") ?: return@setOnClickListener
+                val station = locationInput.text.toString().trim()
 
                 val entry = FuelEntry(
                     id = UUID.randomUUID().toString(),
@@ -876,14 +893,15 @@ class MainActivity : AppCompatActivity() {
                     pricePerUnit = pricePerUnit,
                     isFullTank = fullTankSwitch.isChecked,
                     entryType = entryType,
-                    station = locationInput.text.toString().trim(),
+                    station = station,
                     oilMixRatio = if (entryType == EnergyEntryType.FUEL && vehicle.fuelType == FuelType.MIXED_GAS) oilMixInput.text.toString().trim() else "",
                     notes = notesInput.text.toString().trim(),
                 )
                 val updated = data.copy(
                     vehicles = data.vehicles
                         .updateVehicleMileage(vehicle.id, odometer)
-                        .updateVehicleHours(vehicle.id, hours),
+                        .updateVehicleHours(vehicle.id, hours)
+                        .rememberStationSuggestion(vehicle.id, station),
                     fuelEntries = data.fuelEntries + entry,
                 )
                 if (persistData(updated, if (entryType == EnergyEntryType.CHARGING) "Charging entry saved." else "Fuel entry saved.")) {
@@ -1485,6 +1503,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun createScreenRoot(toolbarTitle: String, onBack: (() -> Unit)? = null): LinearLayout {
+        currentBackAction = onBack
         val shell = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(color(R.color.app_background))
@@ -1711,6 +1730,80 @@ class MainActivity : AppCompatActivity() {
             imeOptions = EditorInfo.IME_ACTION_NEXT
         }
 
+    private fun installStationSuggestionDropdown(
+        input: TextInputEditText,
+        vehicleId: String,
+        suggestions: () -> List<String>,
+        onSuggestionsChanged: (List<String>) -> Unit,
+    ) {
+        fun showDropdown() {
+            val currentSuggestions = suggestions()
+            if (currentSuggestions.isEmpty()) return
+
+            val popup = ListPopupWindow(this).apply {
+                anchorView = input
+                width = input.width.takeIf { it > 0 } ?: 280.dp()
+                height = ViewGroup.LayoutParams.WRAP_CONTENT
+                setAdapter(
+                    ArrayAdapter(
+                        this@MainActivity,
+                        android.R.layout.simple_list_item_1,
+                        currentSuggestions,
+                    ),
+                )
+                setOnItemClickListener { _, _, position, _ ->
+                    input.setText(currentSuggestions[position])
+                    input.setSelection(input.text?.length ?: 0)
+                    dismiss()
+                }
+            }
+            popup.show()
+            popup.listView?.setOnItemLongClickListener { _, _, position, _ ->
+                val station = currentSuggestions[position]
+                popup.dismiss()
+                confirmRemoveStationSuggestion(vehicleId, station) { updated ->
+                    onSuggestionsChanged(updated)
+                }
+                true
+            }
+        }
+
+        input.setOnClickListener { showDropdown() }
+        input.setOnFocusChangeListener { _, hasFocus ->
+            if (hasFocus) showDropdown()
+        }
+    }
+
+    private fun confirmRemoveStationSuggestion(
+        vehicleId: String,
+        station: String,
+        onRemoved: (List<String>) -> Unit,
+    ) {
+        val vehicle = data.vehicles.firstOrNull { it.id == vehicleId } ?: return
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Remove Station")
+            .setMessage("Remove \"$station\" from ${vehicle.name}'s dropdown? Existing log history will not be changed.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Remove") { _, _ ->
+                val updatedSuggestions = normalizedStationSuggestions(
+                    vehicle.stationSuggestions.filterNot { it.equals(station, ignoreCase = true) },
+                )
+                val updated = data.copy(
+                    vehicles = data.vehicles.map {
+                        if (it.id == vehicleId) {
+                            it.copy(stationSuggestions = updatedSuggestions, updatedAt = LocalDateTime.now())
+                        } else {
+                            it
+                        }
+                    },
+                )
+                if (persistData(updated, "Station removed from dropdown.")) {
+                    onRemoved(updatedSuggestions)
+                }
+            }
+            .show()
+    }
+
     private fun createSpinner(labels: List<String>, selectedIndex: Int = 0): Spinner {
         val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, labels).apply {
             setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
@@ -1899,6 +1992,27 @@ class MainActivity : AppCompatActivity() {
                 vehicle
             }
         }
+
+    private fun List<Vehicle>.rememberStationSuggestion(vehicleId: String, station: String): List<Vehicle> =
+        map { vehicle ->
+            if (vehicle.id == vehicleId && station.isNotBlank()) {
+                vehicle.copy(
+                    stationSuggestions = normalizedStationSuggestions(vehicle.stationSuggestions + station),
+                    updatedAt = LocalDateTime.now(),
+                )
+            } else {
+                vehicle
+            }
+        }
+
+    private fun normalizedStationSuggestions(stations: List<String>): List<String> {
+        val byName = linkedMapOf<String, String>()
+        stations.forEach { station ->
+            val trimmed = station.trim()
+            if (trimmed.isNotBlank()) byName.putIfAbsent(trimmed.lowercase(Locale.US), trimmed)
+        }
+        return byName.values.toList()
+    }
 
     private fun vehicleDescriptor(vehicle: Vehicle): String =
         listOfNotNull(

@@ -47,6 +47,10 @@ object FuelJsonCodec {
             appendComma()
             appendNullableField("recommendedRearTirePsi", vehicle.recommendedRearTirePsi)
             appendComma()
+            appendArrayField("stationSuggestions", normalizedStationSuggestions(vehicle.stationSuggestions)) { station ->
+                appendJsonString(station)
+            }
+            appendComma()
             appendField("distanceUnit", vehicle.distanceUnit.storageValue)
             appendComma()
             appendField("volumeUnit", vehicle.volumeUnit.storageValue)
@@ -216,8 +220,11 @@ object FuelJsonCodec {
             maintenanceRemindersEnabled = settingsObject?.optionalBoolean("maintenanceRemindersEnabled") ?: false,
         )
 
-        val vehicles = root.requiredList("vehicles").map { value ->
+        val stationSuggestionsByVehicleId = mutableMapOf<String, List<String>?>()
+        val rawVehicles = root.requiredList("vehicles").map { value ->
             val item = value.asObject("vehicle")
+            val vehicleId = item.requiredString("id")
+            stationSuggestionsByVehicleId[vehicleId] = parseStationSuggestions(item)
             val fuelType = parseFuelType(item)
             val assetCategory = AssetCategory.fromStorage(item.optionalString("assetCategory") ?: AssetCategory.VEHICLE.storageValue)
             val assetType = AssetType.fromStorage(
@@ -228,7 +235,7 @@ object FuelJsonCodec {
             )
             val createdAt = item.optionalString("createdAt")?.let(LocalDateTime::parse) ?: LocalDateTime.now()
             Vehicle(
-                id = item.requiredString("id"),
+                id = vehicleId,
                 name = item.requiredString("name"),
                 make = item.optionalString("make").orEmpty(),
                 model = item.optionalString("model").orEmpty(),
@@ -243,6 +250,7 @@ object FuelJsonCodec {
                 batteryCapacity = item.optionalNumber("batteryCapacity"),
                 recommendedFrontTirePsi = item.optionalNumber("recommendedFrontTirePsi"),
                 recommendedRearTirePsi = item.optionalNumber("recommendedRearTirePsi"),
+                stationSuggestions = stationSuggestionsByVehicleId.getValue(vehicleId).orEmpty(),
                 distanceUnit = DistanceUnit.fromStorage(item.requiredString("distanceUnit")),
                 volumeUnit = VolumeUnit.fromStorage(item.requiredString("volumeUnit")),
                 energyUnit = EnergyUnit.fromStorage(item.optionalString("energyUnit") ?: EnergyUnit.KILOWATT_HOURS.storageValue),
@@ -253,6 +261,7 @@ object FuelJsonCodec {
         }
 
         val fuelEntries = parseFuelEntries(root)
+        val vehicles = rawVehicles.withBackfilledStationSuggestions(fuelEntries, stationSuggestionsByVehicleId)
         val meterLogs = parseMeterLogs(root)
         val categories = normalizedCategories(
             root.optionalList("maintenanceCategories").orEmpty().map { value ->
@@ -339,8 +348,11 @@ object FuelJsonCodec {
             maintenanceRemindersEnabled = settingsObject?.optionalBoolean("maintenanceRemindersEnabled") ?: false,
         )
 
-        val vehicles = root.requiredList("vehicles").map { value ->
+        val stationSuggestionsByVehicleId = mutableMapOf<String, List<String>?>()
+        val rawVehicles = root.requiredList("vehicles").map { value ->
             val item = value.asObject("vehicle")
+            val vehicleId = item.requiredString("id")
+            stationSuggestionsByVehicleId[vehicleId] = parseStationSuggestions(item)
             val fuelType = parseFuelType(item)
             val assetCategory = AssetCategory.fromStorage(item.optionalString("assetCategory") ?: AssetCategory.VEHICLE.storageValue)
             val assetType = AssetType.fromStorage(
@@ -350,7 +362,7 @@ object FuelJsonCodec {
                 assetCategory,
             )
             Vehicle(
-                id = item.requiredString("id"),
+                id = vehicleId,
                 name = item.requiredString("name"),
                 make = item.optionalString("make").orEmpty(),
                 model = item.optionalString("model").orEmpty(),
@@ -365,6 +377,7 @@ object FuelJsonCodec {
                 batteryCapacity = item.optionalNumber("batteryCapacity"),
                 recommendedFrontTirePsi = item.optionalNumber("recommendedFrontTirePsi"),
                 recommendedRearTirePsi = item.optionalNumber("recommendedRearTirePsi"),
+                stationSuggestions = stationSuggestionsByVehicleId.getValue(vehicleId).orEmpty(),
                 distanceUnit = DistanceUnit.fromStorage(item.requiredString("distanceUnit")),
                 volumeUnit = VolumeUnit.fromStorage(item.requiredString("volumeUnit")),
                 energyUnit = EnergyUnit.fromStorage(item.optionalString("energyUnit") ?: EnergyUnit.KILOWATT_HOURS.storageValue),
@@ -373,6 +386,7 @@ object FuelJsonCodec {
         }
 
         val fuelEntries = parseFuelEntries(root)
+        val vehicles = rawVehicles.withBackfilledStationSuggestions(fuelEntries, stationSuggestionsByVehicleId)
         val categories = normalizedCategories(
             root.optionalList("maintenanceCategories").orEmpty().map { value ->
                 val item = value.asObject("maintenance category")
@@ -506,7 +520,7 @@ object FuelJsonCodec {
                 .maxOfOrNull { it.odometer }
                 ?: 0.0
             vehicle.copy(currentMileage = maxOf(0.0, latestFuel, latestMaintenance))
-        }
+        }.withBackfilledStationSuggestions(fuelEntries, emptyMap())
 
         val data = FuelMathData(
             schemaVersion = CURRENT_SCHEMA_VERSION,
@@ -566,6 +580,30 @@ object FuelJsonCodec {
             )
         }
 
+    private fun parseStationSuggestions(item: Map<String, Any?>): List<String>? =
+        item.optionalList("stationSuggestions")?.let { values ->
+            normalizedStationSuggestions(values.mapNotNull { it as? String })
+        }
+
+    private fun List<Vehicle>.withBackfilledStationSuggestions(
+        fuelEntries: List<FuelEntry>,
+        stationSuggestionsByVehicleId: Map<String, List<String>?>,
+    ): List<Vehicle> =
+        map { vehicle ->
+            val explicitSuggestions = stationSuggestionsByVehicleId[vehicle.id]
+            if (explicitSuggestions != null) {
+                return@map vehicle.copy(stationSuggestions = normalizedStationSuggestions(explicitSuggestions))
+            }
+            val historicalStations = fuelEntries
+                .asSequence()
+                .filter { it.vehicleId == vehicle.id }
+                .map { it.station }
+                .toList()
+            vehicle.copy(
+                stationSuggestions = normalizedStationSuggestions(vehicle.stationSuggestions + historicalStations),
+            )
+        }
+
     private fun validateData(data: FuelMathData) {
         val vehicleIds = data.vehicles.map { it.id }.toSet()
         val categoryIds = data.maintenanceCategories.map { it.id }.toSet()
@@ -606,6 +644,9 @@ object FuelJsonCodec {
             },
         ) {
             "Vehicle tire PSI reminders must be positive when present"
+        }
+        require(data.vehicles.all { it.stationSuggestions == normalizedStationSuggestions(it.stationSuggestions) }) {
+            "Vehicle station suggestions must be unique and non-blank"
         }
         require(data.maintenanceCategories.all { it.id.isNotBlank() && it.name.isNotBlank() }) {
             "Maintenance category id and name are required"
@@ -682,6 +723,15 @@ object FuelJsonCodec {
         categories.forEach { category -> byId[category.id] = category }
         MaintenanceDefaults.categories.forEach { category -> byId.putIfAbsent(category.id, category) }
         return byId.values.toList()
+    }
+
+    private fun normalizedStationSuggestions(stations: List<String>): List<String> {
+        val byName = LinkedHashMap<String, String>()
+        stations.forEach { station ->
+            val trimmed = station.trim()
+            if (trimmed.isNotBlank()) byName.putIfAbsent(trimmed.lowercase(), trimmed)
+        }
+        return byName.values.toList()
     }
 
     private fun parseFuelType(item: Map<String, Any?>): FuelType {
