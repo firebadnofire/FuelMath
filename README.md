@@ -2,6 +2,17 @@
 
 Fuel Math is an offline-first Android app for tracking personally owned vehicle and equipment operating costs and preventative maintenance. The project is intentionally narrow: it aims to help a person manage local asset records, understand what maintenance is due next, and keep a clear local record of what each asset costs to run.
 
+<p>
+  <a href="https://archuser.org/fuelmath.apk">
+    <img src="readme-assets/badge_obtainium.png" alt="Get it on Obtainium" width="188" height="56" valign="middle">
+  </a>
+  <a href="https://archuser.org/fuelmath.apk">
+    <img src="readme-assets/badge-apk.png" alt="Download APK" width="145" height="56" valign="middle">
+  </a>
+</p>
+
+Version: `v0.1.0`
+
 ## Overview
 
 The app is being built as a local maintenance checkbook rather than a generic fleet platform or cloud service. Its core job is to answer a few practical questions quickly:
